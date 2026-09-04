@@ -8,9 +8,8 @@ from daytona_gym.adapters.slime.sample import (
     attach_cancelled_metadata,
     prompt_text,
 )
-from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
-from daytona_gym.runtime.fake import FakeEnvironmentRuntime
+from daytona_gym.runtime.factory import build_environment_runtime
 from daytona_gym.runtime.generation import GenerationBackend
 from daytona_gym.runtime.rollout import RolloutRequest, RolloutRunner
 from daytona_gym.runtime.types import EnvironmentSpec, OrdinalTokenizer, Tokenizer
@@ -24,7 +23,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
 
     Import path: `daytona_gym.adapters.slime.generate`
     """
-    runtime = _require_runtime(args)
+    runtime = build_environment_runtime(args)
     generator = _require_generator(args)
     tracer: Tracer = getattr(args, "daytona_tracer", None) or NoOpTracer()
     metrics: Metrics = getattr(args, "daytona_metrics", None) or NoOpMetrics()
@@ -67,18 +66,6 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
 
     apply_trajectory(sample, trajectory, tokenizer)
     return sample
-
-
-def _require_runtime(args: Any) -> EnvironmentRuntime:
-    runtime = getattr(args, "daytona_environment_runtime", None)
-    if runtime is not None:
-        return runtime
-    if bool(getattr(args, "daytona_use_fake_runtime", False)):
-        return FakeEnvironmentRuntime()
-    raise DaytonaError(
-        ErrorCode.PLATFORM_ERROR,
-        "no environment runtime configured; set args.daytona_environment_runtime",
-    )
 
 
 def _require_generator(args: Any) -> GenerationBackend:

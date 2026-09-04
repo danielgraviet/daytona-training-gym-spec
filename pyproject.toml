@@ -9,9 +9,17 @@ description = "Portable RL rollout environments and observability for existing t
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Daytona" }]
-dependencies = []
+dependencies = [
+    "daytona>=0.198.0",
+]
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -24,3 +32,6 @@ packages = ["daytona_gym"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "e2e: live Daytona API tests (opt-in with --e2e or pytest tests/e2e)",
+]
