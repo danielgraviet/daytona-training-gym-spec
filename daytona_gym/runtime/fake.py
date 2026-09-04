@@ -38,8 +38,10 @@ class FakeEnvironmentRuntime:
         hang_on_create: bool = False,
         hang_on_execute: bool = False,
         stdout_limit: int = DEFAULT_CAPTURE_LIMIT,
+        fail_create_times: int = 0,
     ) -> None:
         self._fail_create = fail_create
+        self._fail_create_remaining = fail_create_times
         self._create_delay_seconds = create_delay_seconds
         self._tool_delay_seconds = tool_delay_seconds
         self._hang_on_create = hang_on_create
@@ -82,6 +84,13 @@ class FakeEnvironmentRuntime:
                 ErrorCode.SANDBOX_PROVISION_FAILED,
                 "fake sandbox provision failed",
                 details={"image": spec.image},
+            )
+        if self._fail_create_remaining > 0:
+            self._fail_create_remaining -= 1
+            raise DaytonaError(
+                ErrorCode.SANDBOX_PROVISION_FAILED,
+                "fake sandbox provision failed",
+                details={"remaining": self._fail_create_remaining},
             )
         if self._create_delay_seconds:
             await asyncio.sleep(self._create_delay_seconds)

@@ -11,6 +11,7 @@ class GenerationResult:
     text: str
     token_ids: list[int] | None = None
     log_probs: list[float] | None = None
+    request_id: str | None = None
 
 
 class GenerationBackend(Protocol):

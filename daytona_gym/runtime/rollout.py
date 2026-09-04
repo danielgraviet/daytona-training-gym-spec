@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +18,7 @@ from daytona_gym.runtime.types import (
     ToolResult,
     TrajectoryEvent,
 )
+from daytona_gym.telemetry.ids import correlation_attributes
 from daytona_gym.telemetry.metrics import Metrics, NoOpMetrics
 from daytona_gym.telemetry.traces import NoOpTracer, Tracer
 
@@ -55,6 +57,9 @@ class RolloutRequest:
     project_id: str | None = None
     stdout_limit: int = DEFAULT_CAPTURE_LIMIT
     tool_timeout_seconds: float | None = None
+    worker_id: str | None = None
+    training_step: int | str | None = None
+    rollout_batch_id: str | None = None
 
 
 class RolloutRunner:
@@ -82,19 +87,23 @@ class RolloutRunner:
         error_message: str | None = None
         final_response: str | None = None
         sandbox_id: str | None = None
-        ids: dict[str, object] = {
-            "project_id": request.project_id or "",
-            "run_id": request.run_id,
-            "rollout_id": request.rollout_id,
-            "sample_id": request.sample_id or "",
-        }
+        ids: dict[str, object] = correlation_attributes(
+            run_id=request.run_id,
+            rollout_id=request.rollout_id,
+            project_id=request.project_id,
+            sample_id=request.sample_id,
+            worker_id=request.worker_id,
+            training_step=request.training_step,
+            rollout_batch_id=request.rollout_batch_id,
+        )
 
-        try:
-            with self._tracer.span("rollout", **ids):
+        with self._tracer.span("rollout", **ids) as rollout_span:
+            try:
                 async with asyncio.timeout(request.timeout_seconds):
                     env = await self._provision(request, ids)
                     sandbox_id = env.sandbox_id
                     ids = {**ids, "sandbox_id": sandbox_id}
+                    rollout_span.set_attribute("sandbox_id", sandbox_id)
                     conversation = request.prompt
                     for _turn in range(request.max_turns):
                         generation, gen_event = await self._generate(
@@ -114,49 +123,52 @@ class RolloutRunner:
                         conversation = f"{conversation}{generation.text}{tool_event.text}"
                     else:
                         status = "truncated"
-        except TimeoutError:
-            status = "aborted"
-            error_code = str(ErrorCode.ROLLOUT_TIMEOUT)
-            error_message = "rollout exceeded timeout"
-        except DaytonaError as exc:
-            status = exc.rollout_status
-            error_code = str(exc.code)
-            error_message = exc.message
-            events.append(
-                TrajectoryEvent(
-                    type="error",
-                    text=exc.message,
-                    started_at=_utcnow(),
-                    finished_at=_utcnow(),
-                    error_code=str(exc.code),
+            except TimeoutError:
+                status = "aborted"
+                error_code = str(ErrorCode.ROLLOUT_TIMEOUT)
+                error_message = "rollout exceeded timeout"
+            except DaytonaError as exc:
+                status = exc.rollout_status
+                error_code = str(exc.code)
+                error_message = exc.message
+                events.append(
+                    TrajectoryEvent(
+                        type="error",
+                        text=exc.message,
+                        started_at=_utcnow(),
+                        finished_at=_utcnow(),
+                        error_code=str(exc.code),
+                    )
                 )
-            )
-        except asyncio.CancelledError:
-            status = "aborted"
-            error_message = "rollout cancelled"
-            self._metrics.increment("rollout.count", status="aborted")
-            raise
-        except Exception as exc:
-            status = "failed"
-            error_code = str(ErrorCode.PLATFORM_ERROR)
-            error_message = str(exc)
-            events.append(
-                TrajectoryEvent(
-                    type="error",
-                    text=str(exc),
-                    started_at=_utcnow(),
-                    finished_at=_utcnow(),
-                    error_code=str(ErrorCode.PLATFORM_ERROR),
+            except asyncio.CancelledError:
+                status = "aborted"
+                error_message = "rollout cancelled"
+                self._metrics.increment("rollout.count", status="aborted")
+                raise
+            except Exception as exc:
+                status = "failed"
+                error_code = str(ErrorCode.PLATFORM_ERROR)
+                error_message = str(exc)
+                events.append(
+                    TrajectoryEvent(
+                        type="error",
+                        text=str(exc),
+                        started_at=_utcnow(),
+                        finished_at=_utcnow(),
+                        error_code=str(ErrorCode.PLATFORM_ERROR),
+                    )
                 )
-            )
-        finally:
-            if env is not None:
-                finalize_ids = {**ids, "sandbox_id": env.sandbox_id}
-                with self._tracer.span("sandbox.finalize", **finalize_ids):
-                    try:
-                        await self._runtime.close(env)
-                    except Exception:
-                        pass
+            finally:
+                if env is not None:
+                    finalize_ids = {**ids, "sandbox_id": env.sandbox_id}
+                    with self._tracer.span("sandbox.finalize", **finalize_ids):
+                        try:
+                            await self._runtime.close(env)
+                        except Exception:
+                            pass
+                rollout_span.set_attribute("status", status)
+                if error_code is not None:
+                    rollout_span.set_attribute("error_code", error_code)
 
         finished_at = _utcnow()
         self._metrics.increment("rollout.count", status=status)
@@ -184,15 +196,27 @@ class RolloutRunner:
         request: RolloutRequest,
         ids: dict[str, object],
     ) -> EnvironmentHandle:
-        with self._tracer.span("sandbox.provision", **ids):
-            try:
-                async with asyncio.timeout(request.spec.timeout_seconds):
-                    return await self._runtime.create(request.spec)
-            except TimeoutError as exc:
-                raise DaytonaError(
-                    ErrorCode.SANDBOX_TIMEOUT,
-                    "sandbox provision timed out",
-                ) from exc
+        started = time.perf_counter()
+        status = "ok"
+        try:
+            with self._tracer.span("sandbox.provision", **ids):
+                try:
+                    async with asyncio.timeout(request.spec.timeout_seconds):
+                        return await self._runtime.create(request.spec)
+                except TimeoutError as exc:
+                    raise DaytonaError(
+                        ErrorCode.SANDBOX_TIMEOUT,
+                        "sandbox provision timed out",
+                    ) from exc
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            self._metrics.observe(
+                "sandbox.startup_seconds",
+                time.perf_counter() - started,
+                status=status,
+            )
 
     async def _generate(
         self,
@@ -201,16 +225,30 @@ class RolloutRunner:
         ids: dict[str, object],
     ) -> tuple[GenerationResult, TrajectoryEvent]:
         started = _utcnow()
-        with self._tracer.span("inference.generate", **ids):
-            try:
-                generation = await self._generator.generate(conversation, sampling_params)
-            except DaytonaError:
-                raise
-            except Exception as exc:
-                raise DaytonaError(
-                    ErrorCode.INFERENCE_FAILED,
-                    f"inference failed: {exc}",
-                ) from exc
+        mono = time.perf_counter()
+        status = "ok"
+        try:
+            with self._tracer.span("inference.generate", **ids) as span:
+                try:
+                    generation = await self._generator.generate(conversation, sampling_params)
+                except DaytonaError:
+                    raise
+                except Exception as exc:
+                    raise DaytonaError(
+                        ErrorCode.INFERENCE_FAILED,
+                        f"inference failed: {exc}",
+                    ) from exc
+                if generation.request_id:
+                    span.set_attribute("model_request_id", generation.request_id)
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            self._metrics.observe(
+                "inference.duration_seconds",
+                time.perf_counter() - mono,
+                status=status,
+            )
         finished = _utcnow()
         event = TrajectoryEvent(
             type="generation",
@@ -236,8 +274,28 @@ class RolloutRunner:
             arguments=action.arguments,
             timeout_seconds=timeout,
         )
-        with self._tracer.span(f"tool.{action.name}", **ids):
-            result = await self._runtime.execute(env, bounded)
+        tool = str(action.name)
+        mono = time.perf_counter()
+        status = "ok"
+        try:
+            with self._tracer.span(f"tool.{action.name}", **ids) as span:
+                span.set_attribute("tool", tool)
+                result = await self._runtime.execute(env, bounded)
+                span.set_attribute("ok", result.ok)
+                if result.exit_code is not None:
+                    span.set_attribute("exit_code", result.exit_code)
+                if not result.ok:
+                    status = "error"
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            self._metrics.observe(
+                "tool.duration_seconds",
+                time.perf_counter() - mono,
+                tool=tool,
+                status=status,
+            )
         finished = _utcnow()
         observation = format_observation(bounded, result, stdout_limit=request.stdout_limit)
         return TrajectoryEvent(

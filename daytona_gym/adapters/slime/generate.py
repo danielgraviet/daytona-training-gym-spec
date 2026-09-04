@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import time
 from typing import Any
 
 from daytona_gym.adapters.slime.sample import (
@@ -11,11 +13,12 @@ from daytona_gym.adapters.slime.sample import (
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.factory import build_environment_runtime
 from daytona_gym.runtime.generation import GenerationBackend
-from daytona_gym.runtime.rollout import RolloutRequest, RolloutRunner
+from daytona_gym.runtime.rollout import DaytonaTrajectory, RolloutRequest, RolloutRunner
 from daytona_gym.runtime.types import EnvironmentSpec, OrdinalTokenizer, Tokenizer
-from daytona_gym.telemetry.ids import new_rollout_id, new_run_id
-from daytona_gym.telemetry.metrics import Metrics, NoOpMetrics
-from daytona_gym.telemetry.traces import NoOpTracer, Tracer
+from daytona_gym.telemetry.bind import bind_telemetry
+from daytona_gym.telemetry.ids import correlation_attributes, new_rollout_id, new_run_id
+from daytona_gym.telemetry.metrics import Metrics
+from daytona_gym.telemetry.traces import Tracer
 
 
 async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
@@ -25,8 +28,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     """
     runtime = build_environment_runtime(args)
     generator = _require_generator(args)
-    tracer: Tracer = getattr(args, "daytona_tracer", None) or NoOpTracer()
-    metrics: Metrics = getattr(args, "daytona_metrics", None) or NoOpMetrics()
+    _store, tracer, metrics = bind_telemetry(args)
     tokenizer: Tokenizer = getattr(args, "daytona_tokenizer", None) or OrdinalTokenizer()
 
     run_id = str(getattr(args, "daytona_run_id", None) or new_run_id())
@@ -55,6 +57,9 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         project_id=getattr(args, "daytona_project_id", None),
         stdout_limit=int(getattr(args, "daytona_stdout_limit", 16_384)),
         tool_timeout_seconds=getattr(args, "daytona_tool_timeout_seconds", None),
+        worker_id=getattr(args, "daytona_worker_id", None),
+        training_step=getattr(args, "daytona_training_step", None),
+        rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
     )
     runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
 
@@ -65,7 +70,53 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         raise
 
     apply_trajectory(sample, trajectory, tokenizer)
+    await _maybe_reward(args, sample, trajectory, tracer, metrics)
     return sample
+
+
+async def _maybe_reward(
+    args: Any,
+    sample: Any,
+    trajectory: DaytonaTrajectory,
+    tracer: Tracer,
+    metrics: Metrics,
+) -> None:
+    reward_fn = getattr(args, "daytona_reward_function", None)
+    if reward_fn is None:
+        return
+    ids = correlation_attributes(
+        run_id=trajectory.run_id,
+        rollout_id=trajectory.rollout_id,
+        project_id=getattr(args, "daytona_project_id", None),
+        sample_id=trajectory.sample_id,
+        sandbox_id=trajectory.sandbox_id,
+        worker_id=getattr(args, "daytona_worker_id", None),
+        training_step=getattr(args, "daytona_training_step", None),
+        rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
+    )
+    started = time.perf_counter()
+    status = "ok"
+    try:
+        with tracer.span("reward.compute", **ids):
+            result = reward_fn(args, sample)
+            if inspect.isawaitable(result):
+                result = await result
+            reward = float(result)
+            sample.reward = reward
+            trajectory.reward = reward
+            sample.metadata.setdefault("daytona", {})["reward"] = reward
+    except DaytonaError:
+        status = "error"
+        raise
+    except Exception as exc:
+        status = "error"
+        raise DaytonaError(ErrorCode.REWARD_FAILED, f"reward failed: {exc}") from exc
+    finally:
+        metrics.observe(
+            "reward.duration_seconds",
+            time.perf_counter() - started,
+            status=status,
+        )
 
 
 def _require_generator(args: Any) -> GenerationBackend:

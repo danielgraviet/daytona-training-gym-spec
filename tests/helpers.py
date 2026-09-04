@@ -6,7 +6,7 @@ from enum import Enum
 from types import SimpleNamespace
 from typing import Any
 
-from daytona_gym.runtime.fake import FakeEnvironmentRuntime
+from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.generation import ScriptedGenerator
 from daytona_gym.telemetry.traces import RecordingTracer
 
@@ -45,7 +45,7 @@ def final_turn(content: str) -> str:
 
 def make_args(
     *,
-    runtime: FakeEnvironmentRuntime | None = None,
+    runtime: EnvironmentRuntime | None = None,
     generator: ScriptedGenerator | None = None,
     tracer: RecordingTracer | None = None,
     **overrides: Any,

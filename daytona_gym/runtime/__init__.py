@@ -4,6 +4,7 @@ from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.factory import build_environment_runtime
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.generation import GenerationBackend, GenerationResult, ScriptedGenerator
+from daytona_gym.runtime.limits import LimitingEnvironmentRuntime, RetryingEnvironmentRuntime
 from daytona_gym.runtime.rollout import DaytonaTrajectory, RolloutRequest, RolloutRunner
 from daytona_gym.runtime.types import (
     EnvironmentHandle,
@@ -25,6 +26,8 @@ __all__ = [
     "FakeEnvironmentRuntime",
     "GenerationBackend",
     "GenerationResult",
+    "LimitingEnvironmentRuntime",
+    "RetryingEnvironmentRuntime",
     "RolloutRequest",
     "RolloutRunner",
     "ScriptedGenerator",

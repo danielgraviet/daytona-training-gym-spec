@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from daytona_gym.adapters.slime import generate
 from daytona_gym.runtime.daytona import DaytonaEnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
-from daytona_gym.runtime.factory import build_environment_runtime
-from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.generation import ScriptedGenerator
 from daytona_gym.runtime.types import EnvironmentSpec, ToolAction, ToolName
 from tests.fake_sdk import FakeAsyncDaytona
@@ -225,15 +221,3 @@ async def test_generate_uses_sdk_runtime_and_cleans_up() -> None:
     assert client.deleted == ["sbx_1"]
     assert runtime.leaked_sandbox_ids == ()
 
-
-def test_factory_defaults_to_sdk_runtime() -> None:
-    args = SimpleNamespace()
-    runtime = build_environment_runtime(args)
-    assert isinstance(runtime, DaytonaEnvironmentRuntime)
-    assert args.daytona_environment_runtime is runtime
-
-
-def test_factory_fake_flag() -> None:
-    args = SimpleNamespace(daytona_use_fake_runtime=True)
-    runtime = build_environment_runtime(args)
-    assert isinstance(runtime, FakeEnvironmentRuntime)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
-from daytona_gym.runtime.security import clip_text, redact_env_vars
+from daytona_gym.runtime.security import clip_text, redact_env_vars, sanitize_attributes
 from daytona_gym.runtime.types import EnvironmentSpec, ToolAction, ToolName, ToolResult
 
 
@@ -40,6 +40,23 @@ def test_redact_env_vars_hides_secrets() -> None:
     assert redacted["HOME"] == "/home/user"
     assert redacted["DAYTONA_API_KEY"] == "***"
     assert redacted["TOKEN"] == "***"
+
+
+def test_sanitize_attributes_redacts_secrets_and_stringifies_objects() -> None:
+    sanitized = sanitize_attributes(
+        {
+            "run_id": "run_1",
+            "api_key": "super-secret",
+            "ok": True,
+            "exit_code": 0,
+            "nested": {"ignored": True},
+        }
+    )
+    assert sanitized["run_id"] == "run_1"
+    assert sanitized["api_key"] == "***"
+    assert sanitized["ok"] is True
+    assert sanitized["exit_code"] == 0
+    assert sanitized["nested"] == "{'ignored': True}"
 
 
 def test_clip_text_marks_truncation() -> None:
