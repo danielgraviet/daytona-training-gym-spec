@@ -75,7 +75,42 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     apply_trajectory(sample, trajectory, tokenizer, args=args)
     await _maybe_reward(args, sample, trajectory, tracer, metrics)
     _flush_telemetry(args)
+    _raise_if_unusable(sample, trajectory)
     return sample
+
+
+def _raise_if_unusable(sample: Any, trajectory: DaytonaTrajectory) -> None:
+    """Fail loudly instead of handing Megatron an empty / broken Sample.
+
+    Slime boots SGLang+Megatron before custom generate runs. When sandbox
+    provision fails we used to return a hollow sample; training then died
+    minutes later with an opaque TypeError in KL/advantages.
+    """
+    if trajectory.status not in {"failed", "aborted"}:
+        return
+    code = trajectory.error_code or "platform_error"
+    message = trajectory.error_message or "daytona rollout failed"
+    try:
+        sample.remove_sample = True
+    except Exception:
+        pass
+    raise DaytonaError(
+        _error_code(code),
+        f"daytona rollout {trajectory.status}: [{code}] {message}",
+        details={
+            "run_id": trajectory.run_id,
+            "rollout_id": trajectory.rollout_id,
+            "sandbox_id": trajectory.sandbox_id,
+            "status": trajectory.status,
+        },
+    )
+
+
+def _error_code(code: str) -> ErrorCode:
+    try:
+        return ErrorCode(code)
+    except ValueError:
+        return ErrorCode.PLATFORM_ERROR
 
 
 def _flush_telemetry(args: Any) -> None:

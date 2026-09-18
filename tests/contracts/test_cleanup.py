@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from daytona_gym.adapters.slime import generate
-from daytona_gym.runtime.errors import ErrorCode
+from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.generation import ScriptedGenerator
 from tests.helpers import FakeSlimeSample, final_turn, make_args, tool_turn
@@ -22,8 +22,10 @@ async def test_rollout_timeout_aborts_and_cleans_up() -> None:
     sample = FakeSlimeSample(prompt="slow", index=1)
     args = make_args(runtime=runtime, generator=generator, daytona_timeout_seconds=0.05)
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.ROLLOUT_TIMEOUT
     assert sample.status is FakeSlimeSample.Status.ABORTED
     assert sample.metadata["daytona"]["error_code"] == ErrorCode.ROLLOUT_TIMEOUT
     assert runtime.leaked_sandbox_ids == ()
@@ -45,8 +47,10 @@ async def test_tool_timeout_aborts_and_cleans_up() -> None:
         daytona_tool_timeout_seconds=0.05,
     )
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.TOOL_TIMEOUT
     assert sample.status is FakeSlimeSample.Status.ABORTED
     assert sample.metadata["daytona"]["error_code"] == ErrorCode.TOOL_TIMEOUT
     assert runtime.leaked_sandbox_ids == ()
@@ -99,8 +103,10 @@ async def test_provision_failure_cleanup() -> None:
     sample = FakeSlimeSample(prompt="x", index=1)
     args = make_args(runtime=runtime, generator=generator)
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.SANDBOX_PROVISION_FAILED
     assert runtime.created_ids == ()
     assert runtime.closed_ids == ()
     assert runtime.leaked_sandbox_ids == ()

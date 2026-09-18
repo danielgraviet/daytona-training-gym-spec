@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from daytona_gym.adapters.slime import generate
+from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.generation import ScriptedGenerator
 from daytona_gym.telemetry.traces import RecordingTracer
@@ -41,8 +44,10 @@ async def test_spans_close_on_provision_failure() -> None:
     sample = FakeSlimeSample(prompt="p", index=1)
     args = make_args(runtime=runtime, generator=generator, tracer=tracer)
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.SANDBOX_PROVISION_FAILED
     assert tracer.open_spans == ()
     assert any(record.name == "rollout" for record in tracer.records)
     assert all(record.finished_at is not None for record in tracer.records)

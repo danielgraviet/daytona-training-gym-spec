@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from daytona_gym.adapters.slime import generate
-from daytona_gym.runtime.errors import ErrorCode
+from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.generation import ScriptedGenerator
 from tests.helpers import FakeSlimeSample, final_turn, make_args, tool_turn
@@ -65,10 +67,13 @@ async def test_sandbox_creation_failure_maps_to_failed_sample() -> None:
     sample = FakeSlimeSample(prompt="task", index=2)
     args = make_args(runtime=runtime, generator=generator)
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.SANDBOX_PROVISION_FAILED
     assert sample.status is FakeSlimeSample.Status.FAILED
     assert sample.metadata["daytona"]["error_code"] == ErrorCode.SANDBOX_PROVISION_FAILED
+    assert sample.remove_sample is True
     assert runtime.created_ids == ()
     assert runtime.leaked_sandbox_ids == ()
 
@@ -108,8 +113,10 @@ async def test_malformed_tool_name_is_user_code_error() -> None:
     sample = FakeSlimeSample(prompt="p", index=1)
     args = make_args(runtime=runtime, generator=generator)
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.USER_CODE_ERROR
     assert sample.status is FakeSlimeSample.Status.FAILED
     assert sample.metadata["daytona"]["error_code"] == ErrorCode.USER_CODE_ERROR
     assert runtime.leaked_sandbox_ids == ()

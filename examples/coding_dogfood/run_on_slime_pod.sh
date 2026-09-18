@@ -28,6 +28,9 @@ export DAYTONA_MAX_CONCURRENCY="$MAX_CONCURRENCY"
 mkdir -p "$(dirname "$TELEMETRY_PATH")"
 : "${DAYTONA_API_KEY:?set DAYTONA_API_KEY}"
 
+echo "=== Daytona preflight (fail fast before Slime boot) ==="
+python -m daytona_gym.preflight --timeout-seconds 90
+
 # clean leftover ray/sglang
 pkill -9 sglang 2>/dev/null || true
 ray stop --force 2>/dev/null || true

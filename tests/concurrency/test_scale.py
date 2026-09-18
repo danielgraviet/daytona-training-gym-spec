@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from daytona_gym.adapters.slime import generate
+from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.generation import ScriptedGenerator
 from daytona_gym.runtime.limits import LimitingEnvironmentRuntime
@@ -37,7 +40,7 @@ async def test_120_concurrent_rollouts_all_complete_and_clean_up() -> None:
 async def test_one_failed_rollout_does_not_block_the_rest() -> None:
     runtime = FakeEnvironmentRuntime()
 
-    async def run_one(index: int, *, fail: bool) -> FakeSlimeSample:
+    async def run_one(index: int, *, fail: bool) -> FakeSlimeSample | DaytonaError:
         generator = ScriptedGenerator(
             [final_turn("done")] if not fail else [final_turn("unused")]
         )
@@ -46,16 +49,23 @@ async def test_one_failed_rollout_does_not_block_the_rest() -> None:
         if fail:
             overrides["daytona_env_metadata"] = {"fake.fail_create": "true"}
         args = make_args(runtime=runtime, generator=generator, **overrides)
-        return await generate(args, sample, {})
+        try:
+            return await generate(args, sample, {})
+        except DaytonaError as exc:
+            return exc
 
     results = await asyncio.gather(
         *[run_one(i, fail=(i == 7)) for i in range(20)]
     )
     failed = results[7]
-    assert failed.status is FakeSlimeSample.Status.FAILED
-    assert failed.metadata["daytona"]["error_code"] == "sandbox_provision_failed"
+    assert isinstance(failed, DaytonaError)
+    assert failed.code == ErrorCode.SANDBOX_PROVISION_FAILED
     succeeded = [sample for i, sample in enumerate(results) if i != 7]
-    assert all(sample.status is FakeSlimeSample.Status.COMPLETED for sample in succeeded)
+    assert all(
+        isinstance(sample, FakeSlimeSample)
+        and sample.status is FakeSlimeSample.Status.COMPLETED
+        for sample in succeeded
+    )
     assert runtime.leaked_sandbox_ids == ()
 
 

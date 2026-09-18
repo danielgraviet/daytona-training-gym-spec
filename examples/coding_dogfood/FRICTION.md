@@ -11,42 +11,56 @@
 
 ## What worked
 
-- Vanilla smoke: `scripts/run-qwen2.5-0.5B-gb10-smoke.sh` (Megatron path fixed to `/root/Megatron-LM`) → job succeeded
-- Daytona hooks: `--custom-generate-function-path` + `--custom-rm-path` → one train step succeeded
-- Coding dogfood: `examples/coding_dogfood/run_on_slime_pod.sh` → job `raysubmit_EX8vpma9waRiw9WD` succeeded
-- Traces show `sandbox.provision` → `sandbox.seed` (~0.6s) → `inference.generate` → `sandbox.finalize`
-- Sandbox id logged: `49f58372-2de5-47ff-a76a-3f2fe7f5f324`, status=`completed`, tokens=200
+- Vanilla smoke → Megatron train step
+- Daytona custom generate + RM → train step
+- Coding dogfood with `sandbox.seed` + inspect timeline
+- Concurrency=2: both sandboxes provisioned, seeded, finalized (`raysubmit_Nn9JEmvhrNjY88Vt`)
 
 ## What hurt
 
 1. RunPod `slimerl/slime:latest` exits without keep-alive — need Docker start command `sleep infinity`
 2. Smoke script hardcodes `/root/src/Megatron-LM`; image has `/root/Megatron-LM`
 3. Must download HF ckpt, convert to `torch_dist`, and fetch data before first run
-4. `transformers` 5.x: calling the HF tokenizer as a callable and `list(batch)` yields string keys → Sample.tokens become strings → slime tensorize crashes (`ValueError: too many dimensions 'str'`). Fix: use `tokenizer.encode(...)`
-5. Async JSONL exporter needs an explicit `flush()` before Ray workers exit or the file stays empty
-6. OpenSSH `BatchMode` remote commands fail on RunPod (“doesn't support PTY”); interactive SSH works
-7. API key ended up in shell history / chat — rotate after dogfood
-8. **Qwen2.5-0.5B does not follow the JSON tool protocol** on the coding prompt. Non-JSON text is treated as `final`, so there are no `tool.run_tests` / `tool.write_file` spans. `reward=None` (never ran tests). Seed + train still work; real tool-loop needs a larger instruct model (≥1.5B/4B) or a forced/scripted tool path.
-9. Pod `git pull` blocked by leftover ad-hoc patches (`sample.py`, `generate_dogfood.py`) — need `git checkout -- . && git clean -fd` before pull
-10. `ray job list` prints full `runtime_env` including `DAYTONA_API_KEY` — treat job metadata as secret-bearing; rotate key after dogfood
+4. `transformers` 5.x tokenizer callable → string token ids → slime tensorize crash. Fix: `tokenizer.encode(...)`
+5. Async JSONL exporter needs explicit `flush()` before Ray workers exit
+6. OpenSSH `BatchMode` fails on RunPod (“doesn't support PTY”); interactive SSH works
+7. API key in shell history / chat / `ray job list` `runtime_env` — rotate after dogfood
+8. **Qwen2.5-0.5B ignores JSON tool protocol** → no `tool.*` spans, `reward=None`
+9. Pod `git pull` blocked by leftover ad-hoc patches — `git checkout -- . && git clean -fd`
+10. **Bad Daytona API key fails late and opaquely (critical DX):**
+    - Slime still boots Ray + SGLang + Megatron (~2–3 min) before custom generate runs
+    - Only then sandbox provision fails
+    - We used to return a hollow Sample; Megatron died with
+      `TypeError: 'NoneType' object is not iterable` in `compute_advantages_and_returns` (KL)
+    - Dev sees a training crash, not `sandbox_provision_failed` / unauthorized
+    - Mitigation shipped: `python -m daytona_gym.preflight` before Slime boot in
+      `run_on_slime_pod.sh`, and generate now **raises** a clear `DaytonaError` on
+      failed/aborted trajectories instead of feeding Megatron empty tensors
 
 ## Concurrency / cleanup (2 sandboxes)
 
-- Job `raysubmit_Nn9JEmvhrNjY88Vt` succeeded with `BATCH_SIZE=2` / `DAYTONA_MAX_CONCURRENCY=2` / `coding_two.jsonl`
-- Inspect: `rollouts=2`, `status completed=2`
-- `rollout_0` and `rollout_1` each show `sandbox.provision` → `sandbox.seed` → `inference.generate` → `sandbox.finalize` (no hang / no missing finalize)
+- Job `raysubmit_Nn9JEmvhrNjY88Vt` — pass (see above)
 
 ## Missing product pieces (for external partner)
+
+- Tool-loop on a model that emits JSON tools (≥1.5B/4B) or forced first `run_tests`
+- Redact secrets from Ray runtime_env dumps / docs warning
+- Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
 
 ## Errors / stack traces worth keeping
 
 ```text
 ValueError: too many dimensions 'str'
   at slime.observability.rollout_data_utils._cpu_tensor
-  cause: Sample.tokens held tokenizer BatchEncoding keys (str) under transformers 5.x
+```
+
+```text
+TypeError: 'NoneType' object is not iterable
+  at slime.backends.megatron_utils.loss.compute_advantages_and_returns
+  (bad DAYTONA_API_KEY → empty rollout sample → KL over None)
+  job: raysubmit_2HR6k8zxY5zZh8g8
 ```
 
 ```text
 [daytona-dogfood] status=completed sandbox=49f58372-... reward=None tokens=200
-  # coding prompt; no tool turns on 0.5B
 ```

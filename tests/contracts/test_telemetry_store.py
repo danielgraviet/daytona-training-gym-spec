@@ -194,8 +194,10 @@ async def test_failed_provision_timeline_records_the_error() -> None:
     sample = FakeSlimeSample(prompt="p", index=1)
     args = make_args(runtime=runtime, generator=generator, daytona_telemetry_store=store)
 
-    await generate(args, sample, {})
+    with pytest.raises(DaytonaError) as caught:
+        await generate(args, sample, {})
 
+    assert caught.value.code == ErrorCode.SANDBOX_PROVISION_FAILED
     timeline = reconstruct_rollout(store, "rollout_1")
     names = [step.name for step in timeline]
     assert names[0] == "rollout"
