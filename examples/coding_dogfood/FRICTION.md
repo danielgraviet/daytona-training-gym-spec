@@ -15,6 +15,7 @@
 - Daytona custom generate + RM → train step
 - Coding dogfood with `sandbox.seed` + inspect timeline
 - Concurrency=2: both sandboxes provisioned, seeded, finalized (`raysubmit_Nn9JEmvhrNjY88Vt`)
+- Bootstrap `tool.run_tests` after seed (`raysubmit_qMmVkw1ZeGapWCCi`, inspect: seed → `tool.run_tests` → generate → finalize; `tools run_tests=1`)
 
 ## What hurt
 
@@ -26,8 +27,9 @@
 6. OpenSSH `BatchMode` fails on RunPod (“doesn't support PTY”); interactive SSH works
 7. API key in shell history / chat / `ray job list` `runtime_env` — rotate after dogfood
 8. **Qwen2.5-0.5B / 1.5B ignore JSON tool protocol** → model emits free text as `final`, so no model-driven `tool.*` spans and previously `reward=None`. Mitigation: `daytona_bootstrap_run_tests` (default on in `generate_dogfood`) runs `python test_broken.py` once after seed so traces always include `tool.run_tests` and reward is at least `0.0`.
-9. Pod `git pull` blocked by leftover ad-hoc patches — `git checkout -- . && git clean -fd`
-10. **Bad Daytona API key fails late and opaquely (critical DX):**
+9. **Bootstrap via `args` setattr alone can silently no-op on Ray workers** — jobs showed `sandbox.seed` but skipped `tool.run_tests` until `DAYTONA_BOOTSTRAP_RUN_TESTS` / `DAYTONA_BOOTSTRAP_RUN_TESTS_CMD` / `DAYTONA_SEED_CODING` were injected in Ray `runtime_env` and resolved inside `generate.py` (`f97d2a9`). Prefer env for anything the worker must see.
+10. Pod `git pull` blocked by leftover ad-hoc patches — `git checkout -- . && git clean -fd`
+11. **Bad Daytona API key fails late and opaquely (critical DX):**
     - Slime still boots Ray + SGLang + Megatron (~2–3 min) before custom generate runs
     - Only then sandbox provision fails
     - We used to return a hollow Sample; Megatron died with
@@ -36,16 +38,20 @@
     - Mitigation shipped: `python -m daytona_gym.preflight` before Slime boot in
       `run_on_slime_pod.sh`, and generate now **raises** a clear `DaytonaError` on
       failed/aborted trajectories instead of feeding Megatron empty tensors
-11. Slime `scripts/models/qwen2.5-1.5B.sh` shipped `--rotary-base 10000` but HF
+12. Slime `scripts/models/qwen2.5-1.5B.sh` shipped `--rotary-base 10000` but HF
     `rope_theta=1000000` → `hf_validate_args` AssertionError until patched
 
 ## Concurrency / cleanup (2 sandboxes)
 
 - Job `raysubmit_Nn9JEmvhrNjY88Vt` — pass (see above)
 
+## Bootstrap verified
+
+- Job `raysubmit_qMmVkw1ZeGapWCCi` — `tools run_tests=1`; timeline seed → `tool.run_tests` → generate → finalize
+
 ## Missing product pieces (for external partner)
 
-- Tool-loop on a model that emits JSON tools (≥1.5B/4B) or forced first `run_tests`
+- Tool-loop on a model that emits JSON tools (≥4B) — bootstrap covers forced first `run_tests` today
 - Redact secrets from Ray runtime_env dumps / docs warning
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
 
