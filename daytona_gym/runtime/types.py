@@ -56,6 +56,8 @@ class TrajectoryEvent:
     exit_code: int | None = None
     ok: bool | None = None
     error_code: str | None = None
+    token_ids: list[int] | None = None
+    log_probs: list[float] | None = None
 
 
 class Tokenizer(Protocol):

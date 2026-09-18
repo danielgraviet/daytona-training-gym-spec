@@ -255,6 +255,8 @@ class RolloutRunner:
             text=generation.text,
             started_at=started,
             finished_at=finished,
+            token_ids=list(generation.token_ids) if generation.token_ids is not None else None,
+            log_probs=list(generation.log_probs) if generation.log_probs is not None else None,
         )
         return generation, event
 

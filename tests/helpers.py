@@ -31,8 +31,10 @@ class FakeSlimeSample:
     response_length: int = 0
     reward: float | None = None
     loss_mask: list[int] | None = None
+    rollout_log_probs: list[float] | None = None
     status: Status = Status.PENDING
     metadata: dict[str, Any] = field(default_factory=dict)
+    label: Any = None
 
 
 def tool_turn(name: str, arguments: dict[str, Any]) -> str:

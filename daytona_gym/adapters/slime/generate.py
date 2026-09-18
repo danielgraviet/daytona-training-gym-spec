@@ -9,12 +9,14 @@ from daytona_gym.adapters.slime.sample import (
     apply_trajectory,
     attach_cancelled_metadata,
     prompt_text,
+    resolve_tokenizer,
 )
+from daytona_gym.adapters.slime.sglang_generator import SGLangRouterGenerator
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.factory import build_environment_runtime
 from daytona_gym.runtime.generation import GenerationBackend
 from daytona_gym.runtime.rollout import DaytonaTrajectory, RolloutRequest, RolloutRunner
-from daytona_gym.runtime.types import EnvironmentSpec, OrdinalTokenizer, Tokenizer
+from daytona_gym.runtime.types import EnvironmentSpec, Tokenizer
 from daytona_gym.telemetry.bind import bind_telemetry
 from daytona_gym.telemetry.ids import correlation_attributes, new_rollout_id, new_run_id
 from daytona_gym.telemetry.metrics import Metrics
@@ -27,9 +29,9 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     Import path: `daytona_gym.adapters.slime.generate`
     """
     runtime = build_environment_runtime(args)
-    generator = _require_generator(args)
+    generator = _resolve_generator(args)
     _store, tracer, metrics = bind_telemetry(args)
-    tokenizer: Tokenizer = getattr(args, "daytona_tokenizer", None) or OrdinalTokenizer()
+    tokenizer: Tokenizer = resolve_tokenizer(args)
 
     run_id = str(getattr(args, "daytona_run_id", None) or new_run_id())
     rollout_id = _daytona_rollout_id(sample)
@@ -69,7 +71,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         attach_cancelled_metadata(sample, run_id=run_id, rollout_id=rollout_id)
         raise
 
-    apply_trajectory(sample, trajectory, tokenizer)
+    apply_trajectory(sample, trajectory, tokenizer, args=args)
     await _maybe_reward(args, sample, trajectory, tracer, metrics)
     return sample
 
@@ -119,13 +121,15 @@ async def _maybe_reward(
         )
 
 
-def _require_generator(args: Any) -> GenerationBackend:
+def _resolve_generator(args: Any) -> GenerationBackend:
     generator = getattr(args, "daytona_generator", None)
-    if generator is None:
-        raise DaytonaError(
-            ErrorCode.PLATFORM_ERROR,
-            "no generation backend configured; set args.daytona_generator",
-        )
+    if generator is not None:
+        return generator
+    generator = SGLangRouterGenerator.from_args(args)
+    try:
+        args.daytona_generator = generator
+    except Exception:
+        pass
     return generator
 
 
