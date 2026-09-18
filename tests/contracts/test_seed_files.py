@@ -110,3 +110,40 @@ async def test_bootstrap_run_tests_emits_tool_span(tmp_path: Path, capsys) -> No
     out = capsys.readouterr().out
     assert "sandbox.seed" in out
     assert "tool.run_tests" in out
+
+
+async def test_bootstrap_from_ray_runtime_env(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Bootstrap must work when only Ray runtime_env vars are set (no args)."""
+    monkeypatch.setenv("DAYTONA_BOOTSTRAP_RUN_TESTS", "1")
+    monkeypatch.setenv("DAYTONA_BOOTSTRAP_RUN_TESTS_CMD", "python test_broken.py")
+    monkeypatch.setenv("DAYTONA_SEED_CODING", "1")
+
+    path = tmp_path / "env_boot.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator([final_turn("give up")])
+    sample = FakeSlimeSample(prompt="fix", index=11)
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_path=str(path),
+        daytona_run_id="env_boot",
+    )
+    if hasattr(args, "daytona_seed_files"):
+        delattr(args, "daytona_seed_files")
+    if hasattr(args, "daytona_bootstrap_run_tests"):
+        delattr(args, "daytona_bootstrap_run_tests")
+
+    try:
+        await generate(args, sample, {})
+        args.daytona_telemetry_store.flush()
+    finally:
+        args.daytona_telemetry_store.close()
+
+    files = runtime.files_for(runtime.created_ids[0])
+    assert "broken.py" in files
+    assert sample.reward == 0.0
+    assert inspect_main([str(path), "--rollout", "rollout_11"]) == 0
+    out = capsys.readouterr().out
+    assert "sandbox.seed" in out
+    assert "tool.run_tests" in out
+    assert "bootstrap='python test_broken.py'" in out

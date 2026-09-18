@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import time
 from typing import Any
 
@@ -23,6 +24,37 @@ from daytona_gym.telemetry.metrics import Metrics
 from daytona_gym.telemetry.traces import Tracer
 
 
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _resolve_seed_files(args: Any) -> dict[str, str]:
+    files = dict(getattr(args, "daytona_seed_files", None) or {})
+    if files:
+        return files
+    if _env_truthy("DAYTONA_SEED_CODING", default=False):
+        from daytona_gym.adapters.slime._coding_seed import CODING_SEED_FILES
+
+        return dict(CODING_SEED_FILES)
+    return {}
+
+
+def _resolve_bootstrap_run_tests(args: Any) -> str | None:
+    explicit = getattr(args, "daytona_bootstrap_run_tests", None)
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    # Ray workers often only see env_vars from runtime_env — prefer that path.
+    if _env_truthy("DAYTONA_BOOTSTRAP_RUN_TESTS", default=False):
+        return os.environ.get(
+            "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
+            "python test_broken.py",
+        )
+    return None
+
+
 async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     """Slime `--custom-generate-function-path` hook.
 
@@ -36,6 +68,12 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     run_id = str(getattr(args, "daytona_run_id", None) or new_run_id())
     rollout_id = _daytona_rollout_id(sample)
     sample_id = _sample_id(sample)
+    seed_files = _resolve_seed_files(args)
+    bootstrap = _resolve_bootstrap_run_tests(args)
+    print(
+        f"[daytona-gym] generate seed={list(seed_files.keys())} bootstrap={bootstrap!r}",
+        flush=True,
+    )
 
     spec = EnvironmentSpec(
         image=getattr(args, "daytona_image", None),
@@ -62,8 +100,8 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         worker_id=getattr(args, "daytona_worker_id", None),
         training_step=getattr(args, "daytona_training_step", None),
         rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
-        seed_files=dict(getattr(args, "daytona_seed_files", None) or {}),
-        bootstrap_run_tests=getattr(args, "daytona_bootstrap_run_tests", None),
+        seed_files=seed_files,
+        bootstrap_run_tests=bootstrap,
     )
     runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
 

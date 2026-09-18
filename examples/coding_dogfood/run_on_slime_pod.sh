@@ -35,6 +35,10 @@ export REPO SLIME_ROOT MEGATRON_ROOT TELEMETRY_PATH PROMPT_DATA
 export PYTHONUNBUFFERED=1
 export DAYTONA_TELEMETRY_PATH="$TELEMETRY_PATH"
 export DAYTONA_MAX_CONCURRENCY="$MAX_CONCURRENCY"
+# Force coding seed + bootstrap into Ray workers via runtime_env (not just args).
+export DAYTONA_SEED_CODING="${DAYTONA_SEED_CODING:-1}"
+export DAYTONA_BOOTSTRAP_RUN_TESTS="${DAYTONA_BOOTSTRAP_RUN_TESTS:-1}"
+export DAYTONA_BOOTSTRAP_RUN_TESTS_CMD="${DAYTONA_BOOTSTRAP_RUN_TESTS_CMD:-python test_broken.py}"
 mkdir -p "$(dirname "$TELEMETRY_PATH")"
 : "${DAYTONA_API_KEY:?set DAYTONA_API_KEY}"
 
@@ -125,6 +129,12 @@ print(json.dumps({
     "DAYTONA_API_KEY": os.environ["DAYTONA_API_KEY"],
     "DAYTONA_API_URL": os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api"),
     "DAYTONA_TELEMETRY_PATH": os.environ["TELEMETRY_PATH"],
+    "DAYTONA_MAX_CONCURRENCY": os.environ.get("DAYTONA_MAX_CONCURRENCY", "1"),
+    "DAYTONA_SEED_CODING": os.environ.get("DAYTONA_SEED_CODING", "1"),
+    "DAYTONA_BOOTSTRAP_RUN_TESTS": os.environ.get("DAYTONA_BOOTSTRAP_RUN_TESTS", "1"),
+    "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD": os.environ.get(
+        "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD", "python test_broken.py"
+    ),
   }
 }))
 PY
