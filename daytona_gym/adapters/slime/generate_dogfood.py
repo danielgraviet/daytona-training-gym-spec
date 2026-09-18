@@ -43,22 +43,29 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     args.daytona_return_logprob = True
     if not getattr(args, "daytona_seed_files", None):
         args.daytona_seed_files = dict(CODING_SEED_FILES)
-    # Force an initial run_tests so traces/reward work even if the model
-    # never emits JSON tools (common on small instruct checkpoints).
-    if getattr(args, "daytona_bootstrap_run_tests", None) is None:
-        if _env_flag("DAYTONA_BOOTSTRAP_RUN_TESTS", True):
-            args.daytona_bootstrap_run_tests = os.environ.get(
-                "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
-                CODING_RUN_TESTS_COMMAND,
-            )
-        else:
-            args.daytona_bootstrap_run_tests = None
+
+    # Always (re)apply bootstrap unless explicitly disabled. Do not rely on
+    # "attribute is None" — Slime namespaces may carry stale empty values.
+    if _env_flag("DAYTONA_BOOTSTRAP_RUN_TESTS", True):
+        args.daytona_bootstrap_run_tests = os.environ.get(
+            "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
+            CODING_RUN_TESTS_COMMAND,
+        )
+    else:
+        args.daytona_bootstrap_run_tests = None
+
+    print(
+        "[daytona-dogfood] start "
+        f"bootstrap={args.daytona_bootstrap_run_tests!r} "
+        f"seed_files={list((args.daytona_seed_files or {}).keys())}",
+        flush=True,
+    )
 
     sample = await _generate(args, sample, sampling_params)
 
     meta = (getattr(sample, "metadata", None) or {}).get("daytona") or {}
     print(
-        "[daytona-dogfood] "
+        "[daytona-dogfood] done "
         f"status={meta.get('status')} sandbox={meta.get('sandbox_id')} "
         f"reward={meta.get('reward')} "
         f"tokens={len(sample.tokens) if getattr(sample, 'tokens', None) is not None else None}",

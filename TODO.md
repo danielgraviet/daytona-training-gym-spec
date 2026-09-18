@@ -51,10 +51,14 @@ Quick orientation for Daytona Training Gym × Slime GPU dogfood.
 
 ### P0 — Finish bootstrap verification (GPU if available)
 
+- [ ] Pod must be on `fd2a3e9`+ (`git log -1`, `grep bootstrap generate_dogfood.py`)
 - [ ] Confirm inspect timeline has **`tool.run_tests` before `inference.generate`**
-- [ ] Confirm `[daytona-dogfood] … reward=0.0` (bootstrap failure on broken `add`)
+- [ ] Confirm logs show `[daytona-dogfood] start bootstrap='python test_broken.py'`
+- [ ] Confirm `[daytona-dogfood] done … reward=0.0` (not None)
 - [ ] Confirm Megatron train step still succeeds with bootstrap
-- [ ] Update `FRICTION.md` / `GPU_RUN.md` checkboxes with the verified job id
+- [ ] Update `FRICTION.md` / `GPU_RUN.md` with verified job id
+
+**Note (2026-09-18 eve):** job `raysubmit_dWWbjE8P9CU4XEui` still showed seed→generate with no tools (5 spans) — almost certainly **old code on pod** (no pull / no reinstall). Re-pull and re-run before declaring bootstrap broken.
 
 ### P1 — Product / DX follow-ups (CPU OK)
 
