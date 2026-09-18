@@ -21,10 +21,10 @@ python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl
 
 - [x] Sandbox provisioned and cleaned up
 - [x] SGLang ↔ Daytona loop visible in JSONL (`sandbox.provision` / `inference.generate` / `sandbox.finalize`)
-- [ ] `sandbox.seed` + tool spans (`tool.run_tests` / `tool.write_file`) on coding prompt
-- [x] Sample has tokens, loss_mask, rollout_log_probs, reward (train tensorize succeeded)
+- [x] `sandbox.seed` on coding prompt (`run_on_slime_pod.sh`)
+- [ ] Tool spans (`tool.run_tests` / `tool.write_file`) — blocked on 0.5B (no JSON tools; `reward=None`)
+- [x] Sample has tokens, loss_mask, rollout_log_probs (train tensorize succeeded); reward only when tests run
 - [x] At least one optimizer/train step runs
 - [x] Inspector timeline readable without a dashboard
 
-Notes (2026-09-18 RunPod A100): math prompt completed as final text (no tool turns).
-Coding seed + `run_on_slime_pod.sh` is the next GPU check. See `FRICTION.md`.
+Notes (2026-09-18 RunPod A100): coding seed works; 0.5B skips tools. Next: concurrency=2 cleanup. See `FRICTION.md`.

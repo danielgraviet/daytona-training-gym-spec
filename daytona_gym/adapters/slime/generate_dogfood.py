@@ -26,7 +26,9 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         args.daytona_project_id = "coding-rl"
     if getattr(args, "daytona_max_turns", None) is None:
         args.daytona_max_turns = 8
-    if getattr(args, "daytona_max_concurrency", None) is None:
+    if os.environ.get("DAYTONA_MAX_CONCURRENCY"):
+        args.daytona_max_concurrency = int(os.environ["DAYTONA_MAX_CONCURRENCY"])
+    elif getattr(args, "daytona_max_concurrency", None) is None:
         args.daytona_max_concurrency = 1
     args.daytona_return_logprob = True
     if not getattr(args, "daytona_seed_files", None):

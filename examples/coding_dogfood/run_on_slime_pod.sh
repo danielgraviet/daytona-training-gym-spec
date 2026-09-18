@@ -16,10 +16,15 @@ SLIME_ROOT="${SLIME_ROOT:-/root/slime}"
 MEGATRON_ROOT="${MEGATRON_ROOT:-/root/Megatron-LM}"
 TELEMETRY_PATH="${DAYTONA_TELEMETRY_PATH:-$REPO/runs/dogfood.jsonl}"
 PROMPT_DATA="${PROMPT_DATA:-$REPO/examples/coding_dogfood/prompts/coding_one.jsonl}"
+BATCH_SIZE="${BATCH_SIZE:-1}"
+N_SAMPLES="${N_SAMPLES:-1}"
+GLOBAL_BATCH="${GLOBAL_BATCH:-$BATCH_SIZE}"
+MAX_CONCURRENCY="${DAYTONA_MAX_CONCURRENCY:-$BATCH_SIZE}"
 
 export REPO SLIME_ROOT MEGATRON_ROOT TELEMETRY_PATH PROMPT_DATA
 export PYTHONUNBUFFERED=1
 export DAYTONA_TELEMETRY_PATH="$TELEMETRY_PATH"
+export DAYTONA_MAX_CONCURRENCY="$MAX_CONCURRENCY"
 mkdir -p "$(dirname "$TELEMETRY_PATH")"
 : "${DAYTONA_API_KEY:?set DAYTONA_API_KEY}"
 
@@ -45,10 +50,10 @@ ROLLOUT_ARGS=(
    --label-key label
    --apply-chat-template
    --num-rollout 1
-   --rollout-batch-size 1
-   --n-samples-per-prompt 1
+   --rollout-batch-size "$BATCH_SIZE"
+   --n-samples-per-prompt "$N_SAMPLES"
    --num-steps-per-rollout 1
-   --global-batch-size 1
+   --global-batch-size "$GLOBAL_BATCH"
    --rollout-max-response-len 512
    --rollout-temperature 0.7
 )
