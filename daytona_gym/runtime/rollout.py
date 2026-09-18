@@ -64,6 +64,9 @@ class RolloutRequest:
     rollout_batch_id: str | None = None
     # Relative paths → file contents written after sandbox create (before generate).
     seed_files: Mapping[str, str] = field(default_factory=dict)
+    # If set, run this test command once after seed (before the model speaks).
+    # Ensures tool.run_tests appears in traces even when the model skips JSON tools.
+    bootstrap_run_tests: str | None = None
 
 
 class RolloutRunner:
@@ -110,6 +113,13 @@ class RolloutRunner:
                     rollout_span.set_attribute("sandbox_id", sandbox_id)
                     await self._seed_files(env, request, ids)
                     conversation = request.prompt
+                    bootstrap_event = await self._bootstrap_run_tests(env, request, ids)
+                    if bootstrap_event is not None:
+                        events.append(bootstrap_event)
+                        conversation = (
+                            f"{conversation}\n\n"
+                            f"[environment bootstrap run_tests]\n{bootstrap_event.text}\n"
+                        )
                     for _turn in range(request.max_turns):
                         generation, gen_event = await self._generate(
                             conversation, request.sampling_params, ids
@@ -248,6 +258,26 @@ class RolloutRunner:
                         f"seed write failed for {path!r}",
                         details={"path": path, "exit_code": result.exit_code},
                     )
+
+    async def _bootstrap_run_tests(
+        self,
+        env: EnvironmentHandle,
+        request: RolloutRequest,
+        ids: dict[str, object],
+    ) -> TrajectoryEvent | None:
+        command = request.bootstrap_run_tests
+        if not command:
+            return None
+        return await self._execute_tool(
+            env,
+            ToolAction(
+                name=ToolName.RUN_TESTS,
+                arguments={"command": command},
+                timeout_seconds=request.tool_timeout_seconds,
+            ),
+            request,
+            ids,
+        )
 
     async def _generate(
         self,

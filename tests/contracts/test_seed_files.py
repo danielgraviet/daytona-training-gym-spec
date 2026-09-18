@@ -61,7 +61,6 @@ async def test_generate_dogfood_defaults_seed(tmp_path: Path) -> None:
     runtime = FakeEnvironmentRuntime()
     generator = ScriptedGenerator(
         [
-            tool_turn("run_tests", {"command": "python test_broken.py"}),
             final_turn("done"),
         ]
     )
@@ -82,4 +81,32 @@ async def test_generate_dogfood_defaults_seed(tmp_path: Path) -> None:
     files = runtime.files_for(runtime.created_ids[0])
     assert files["broken.py"].startswith("def add")
     assert "test_broken.py" in files
-    assert sample.reward == 0.0  # tests still failing; model did not fix
+    # Bootstrap run_tests fails on seeded broken.py → reward 0.0
+    assert sample.reward == 0.0
+    assert args.daytona_bootstrap_run_tests == "python test_broken.py"
+
+
+async def test_bootstrap_run_tests_emits_tool_span(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "boot.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator([final_turn("give up")])
+    sample = FakeSlimeSample(prompt="fix", index=9)
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_path=str(path),
+        daytona_seed_files=dict(CODING_SEED_FILES),
+        daytona_bootstrap_run_tests="python test_broken.py",
+        daytona_run_id="boot_test",
+    )
+    try:
+        await generate(args, sample, {})
+        args.daytona_telemetry_store.flush()
+    finally:
+        args.daytona_telemetry_store.close()
+
+    assert sample.reward == 0.0
+    assert inspect_main([str(path), "--rollout", "rollout_9"]) == 0
+    out = capsys.readouterr().out
+    assert "sandbox.seed" in out
+    assert "tool.run_tests" in out

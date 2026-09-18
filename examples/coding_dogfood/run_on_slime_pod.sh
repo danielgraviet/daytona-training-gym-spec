@@ -2,12 +2,16 @@
 # Coding dogfood launch for a Slime GPU pod (e.g. RunPod A100 + slimerl/slime).
 #
 # Prerequisites (already done once on the pod):
-#   - /root/Qwen2.5-0.5B-Instruct + _torch_dist convert
+#   - HF + torch_dist convert for the model you pass below
 #   - pip install -e /root/daytona-training-gym-spec
 #   - DAYTONA_API_KEY (+ optional DAYTONA_API_URL) exported
 #
-# Usage (from anywhere on the pod):
-#   bash /root/daytona-training-gym-spec/examples/coding_dogfood/run_on_slime_pod.sh
+# Usage:
+#   bash examples/coding_dogfood/run_on_slime_pod.sh
+#   MODEL_SCRIPT=qwen2.5-1.5B.sh \
+#     HF_CHECKPOINT=/root/Qwen2.5-1.5B-Instruct/ \
+#     REF_LOAD=/root/Qwen2.5-1.5B-Instruct_torch_dist/ \
+#     bash examples/coding_dogfood/run_on_slime_pod.sh
 
 set -ex
 
@@ -20,6 +24,12 @@ BATCH_SIZE="${BATCH_SIZE:-1}"
 N_SAMPLES="${N_SAMPLES:-1}"
 GLOBAL_BATCH="${GLOBAL_BATCH:-$BATCH_SIZE}"
 MAX_CONCURRENCY="${DAYTONA_MAX_CONCURRENCY:-$BATCH_SIZE}"
+MODEL_SCRIPT="${MODEL_SCRIPT:-qwen2.5-0.5B.sh}"
+HF_CHECKPOINT="${HF_CHECKPOINT:-/root/Qwen2.5-0.5B-Instruct/}"
+REF_LOAD="${REF_LOAD:-/root/Qwen2.5-0.5B-Instruct_torch_dist/}"
+SGLANG_MEM="${SGLANG_MEM:-0.4}"
+ROLLOUT_TEMP="${ROLLOUT_TEMP:-0.4}"
+MAX_RESP_LEN="${MAX_RESP_LEN:-768}"
 
 export REPO SLIME_ROOT MEGATRON_ROOT TELEMETRY_PATH PROMPT_DATA
 export PYTHONUNBUFFERED=1
@@ -38,11 +48,11 @@ pkill -9 ray python 2>/dev/null || true
 sleep 2
 
 cd "$SLIME_ROOT"
-source "${SLIME_ROOT}/scripts/models/qwen2.5-0.5B.sh"
+source "${SLIME_ROOT}/scripts/models/${MODEL_SCRIPT}"
 
 CKPT_ARGS=(
-   --hf-checkpoint /root/Qwen2.5-0.5B-Instruct/
-   --ref-load /root/Qwen2.5-0.5B-Instruct_torch_dist/
+   --hf-checkpoint "$HF_CHECKPOINT"
+   --ref-load "$REF_LOAD"
    --save /tmp/slime_coding_dogfood_save/
    --save-interval 9999
 )
@@ -57,8 +67,8 @@ ROLLOUT_ARGS=(
    --n-samples-per-prompt "$N_SAMPLES"
    --num-steps-per-rollout 1
    --global-batch-size "$GLOBAL_BATCH"
-   --rollout-max-response-len 512
-   --rollout-temperature 0.7
+   --rollout-max-response-len "$MAX_RESP_LEN"
+   --rollout-temperature "$ROLLOUT_TEMP"
 )
 
 PERF_ARGS=(
@@ -92,7 +102,7 @@ OPTIMIZER_ARGS=(
 
 SGLANG_ARGS=(
    --rollout-num-gpus-per-engine 1
-   --sglang-mem-fraction-static 0.4
+   --sglang-mem-fraction-static "$SGLANG_MEM"
 )
 
 MISC_ARGS=(

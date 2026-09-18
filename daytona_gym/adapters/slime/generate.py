@@ -63,6 +63,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         training_step=getattr(args, "daytona_training_step", None),
         rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
         seed_files=dict(getattr(args, "daytona_seed_files", None) or {}),
+        bootstrap_run_tests=getattr(args, "daytona_bootstrap_run_tests", None),
     )
     runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
 

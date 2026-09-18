@@ -9,8 +9,18 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from daytona_gym.adapters.slime._coding_seed import CODING_SEED_FILES
+from daytona_gym.adapters.slime._coding_seed import (
+    CODING_RUN_TESTS_COMMAND,
+    CODING_SEED_FILES,
+)
 from daytona_gym.adapters.slime.generate import generate as _generate
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
@@ -33,6 +43,16 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     args.daytona_return_logprob = True
     if not getattr(args, "daytona_seed_files", None):
         args.daytona_seed_files = dict(CODING_SEED_FILES)
+    # Force an initial run_tests so traces/reward work even if the model
+    # never emits JSON tools (common on small instruct checkpoints).
+    if getattr(args, "daytona_bootstrap_run_tests", None) is None:
+        if _env_flag("DAYTONA_BOOTSTRAP_RUN_TESTS", True):
+            args.daytona_bootstrap_run_tests = os.environ.get(
+                "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
+                CODING_RUN_TESTS_COMMAND,
+            )
+        else:
+            args.daytona_bootstrap_run_tests = None
 
     sample = await _generate(args, sample, sampling_params)
 

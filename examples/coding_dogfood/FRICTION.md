@@ -25,7 +25,7 @@
 5. Async JSONL exporter needs explicit `flush()` before Ray workers exit
 6. OpenSSH `BatchMode` fails on RunPod (“doesn't support PTY”); interactive SSH works
 7. API key in shell history / chat / `ray job list` `runtime_env` — rotate after dogfood
-8. **Qwen2.5-0.5B ignores JSON tool protocol** → no `tool.*` spans, `reward=None`
+8. **Qwen2.5-0.5B / 1.5B ignore JSON tool protocol** → model emits free text as `final`, so no model-driven `tool.*` spans and previously `reward=None`. Mitigation: `daytona_bootstrap_run_tests` (default on in `generate_dogfood`) runs `python test_broken.py` once after seed so traces always include `tool.run_tests` and reward is at least `0.0`.
 9. Pod `git pull` blocked by leftover ad-hoc patches — `git checkout -- . && git clean -fd`
 10. **Bad Daytona API key fails late and opaquely (critical DX):**
     - Slime still boots Ray + SGLang + Megatron (~2–3 min) before custom generate runs
@@ -36,6 +36,8 @@
     - Mitigation shipped: `python -m daytona_gym.preflight` before Slime boot in
       `run_on_slime_pod.sh`, and generate now **raises** a clear `DaytonaError` on
       failed/aborted trajectories instead of feeding Megatron empty tensors
+11. Slime `scripts/models/qwen2.5-1.5B.sh` shipped `--rotary-base 10000` but HF
+    `rope_theta=1000000` → `hf_validate_args` AssertionError until patched
 
 ## Concurrency / cleanup (2 sandboxes)
 

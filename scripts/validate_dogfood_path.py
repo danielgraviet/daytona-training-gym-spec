@@ -25,7 +25,6 @@ async def main() -> None:
         OUTPUT.unlink()
 
     turns = [
-        tool_turn("run_tests", {"command": "python test_broken.py"}),
         tool_turn(
             "write_file",
             {"path": "broken.py", "content": "def add(a, b):\n    return a + b\n"},
@@ -62,6 +61,7 @@ async def main() -> None:
         daytona_worker_id="local-dev",
         daytona_training_step=1,
         daytona_seed_files=dict(CODING_SEED_FILES),
+        daytona_bootstrap_run_tests="python test_broken.py",
     )
     args.daytona_generator = None
     args.sglang_router_ip = "127.0.0.1"
