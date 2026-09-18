@@ -27,4 +27,4 @@ python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl
 - [x] At least one optimizer/train step runs
 - [x] Inspector timeline readable without a dashboard
 
-Notes (2026-09-18 RunPod A100): coding seed works; 0.5B skips tools. Next: concurrency=2 cleanup. See `FRICTION.md`.
+Notes (2026-09-18 RunPod A100): coding seed works; 0.5B skips tools; concurrency=2 cleanup passed (`raysubmit_Nn9JEmvhrNjY88Vt`). See `FRICTION.md`.

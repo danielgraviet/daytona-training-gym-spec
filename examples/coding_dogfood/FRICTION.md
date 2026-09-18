@@ -28,13 +28,15 @@
 7. API key ended up in shell history / chat — rotate after dogfood
 8. **Qwen2.5-0.5B does not follow the JSON tool protocol** on the coding prompt. Non-JSON text is treated as `final`, so there are no `tool.run_tests` / `tool.write_file` spans. `reward=None` (never ran tests). Seed + train still work; real tool-loop needs a larger instruct model (≥1.5B/4B) or a forced/scripted tool path.
 9. Pod `git pull` blocked by leftover ad-hoc patches (`sample.py`, `generate_dogfood.py`) — need `git checkout -- . && git clean -fd` before pull
+10. `ray job list` prints full `runtime_env` including `DAYTONA_API_KEY` — treat job metadata as secret-bearing; rotate key after dogfood
+
+## Concurrency / cleanup (2 sandboxes)
+
+- Job `raysubmit_Nn9JEmvhrNjY88Vt` succeeded with `BATCH_SIZE=2` / `DAYTONA_MAX_CONCURRENCY=2` / `coding_two.jsonl`
+- Inspect: `rollouts=2`, `status completed=2`
+- `rollout_0` and `rollout_1` each show `sandbox.provision` → `sandbox.seed` → `inference.generate` → `sandbox.finalize` (no hang / no missing finalize)
 
 ## Missing product pieces (for external partner)
-
-- One-command dogfood script shipped (`run_on_slime_pod.sh`) — still assumes fixed `/root/...` paths
-- Tool-loop validation on a model that actually emits JSON tools (0.5B is insufficient)
-- Optional “force first tool turn” / verifier bootstrap so small models still exercise `run_tests`
-- Concurrency / leak check with `daytona_max_concurrency=2` (next GPU check)
 
 ## Errors / stack traces worth keeping
 
