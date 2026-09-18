@@ -7,35 +7,24 @@ uv run python -m pytest -q
 uv run python scripts/validate_dogfood_path.py
 ```
 
-This machine may not have Slime or NVIDIA GPUs. Complete the items
-below on **your** GPU box.
-
-## On the GPU box
-
-1. Install this package into the Slime env: `pip install -e /path/to/daytona-training-gym-spec`
-2. Confirm Slime already trains a small model without Daytona
-3. Set `DAYTONA_API_KEY` (+ optional `DAYTONA_API_URL`)
-4. Point a coding snapshot/image with a tiny failing test
-5. Inject Daytona args (`examples/coding_dogfood/inject_daytona_args.py`)
-6. Launch Slime with:
-   - `--custom-generate-function-path daytona_gym.adapters.slime.generate`
-   - `--custom-rm-path daytona_gym.adapters.slime.reward.reward`
-   - `daytona_telemetry_path=runs/dogfood.jsonl`
-   - 1 rollout / batch size 1 / low concurrency
-7. Confirm one Megatron train step completes (loss logged; no crash)
-8. Inspect traces:
+## On the GPU box (coding tool-loop)
 
 ```bash
+cd /root/daytona-training-gym-spec && git pull && pip install -e .
+export DAYTONA_API_KEY=...
+# export DAYTONA_API_URL=https://app.daytona.io/api
+bash examples/coding_dogfood/run_on_slime_pod.sh
 python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl
-python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl --rollout rollout_0
 ```
-
-9. Fill `FRICTION.md` with anything painful
 
 ## Pass criteria
 
-- [ ] Sandbox provisioned and cleaned up
-- [ ] Multi-turn SGLang ↔ tool loop visible in JSONL
-- [ ] Sample has tokens, loss_mask, rollout_log_probs, reward
-- [ ] At least one optimizer/train step runs
-- [ ] Inspector timeline readable without a dashboard
+- [x] Sandbox provisioned and cleaned up
+- [x] SGLang ↔ Daytona loop visible in JSONL (`sandbox.provision` / `inference.generate` / `sandbox.finalize`)
+- [ ] `sandbox.seed` + tool spans (`tool.run_tests` / `tool.write_file`) on coding prompt
+- [x] Sample has tokens, loss_mask, rollout_log_probs, reward (train tensorize succeeded)
+- [x] At least one optimizer/train step runs
+- [x] Inspector timeline readable without a dashboard
+
+Notes (2026-09-18 RunPod A100): math prompt completed as final text (no tool turns).
+Coding seed + `run_on_slime_pod.sh` is the next GPU check. See `FRICTION.md`.

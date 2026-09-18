@@ -62,6 +62,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         worker_id=getattr(args, "daytona_worker_id", None),
         training_step=getattr(args, "daytona_training_step", None),
         rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
+        seed_files=dict(getattr(args, "daytona_seed_files", None) or {}),
     )
     runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
 
@@ -73,7 +74,20 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
 
     apply_trajectory(sample, trajectory, tokenizer, args=args)
     await _maybe_reward(args, sample, trajectory, tracer, metrics)
+    _flush_telemetry(args)
     return sample
+
+
+def _flush_telemetry(args: Any) -> None:
+    exporter = getattr(args, "daytona_telemetry_exporter", None)
+    if exporter is None:
+        return
+    flush = getattr(exporter, "flush", None)
+    if callable(flush):
+        try:
+            flush(timeout=2.0)
+        except Exception:
+            return
 
 
 async def _maybe_reward(

@@ -240,6 +240,12 @@ class FakeEnvironmentRuntime:
             return state.scripted_commands[command]
         if state.files.get("__tests_pass") == "1":
             return _ok("tests passed\n")
+        # Coding dogfood seed: broken.py starts with `a - b`; fix is `a + b`.
+        broken = state.files.get("broken.py", "")
+        if "test_broken.py" in state.files and "return a + b" in broken:
+            return _ok("OK\n")
+        if "test_broken.py" in state.files and "return a - b" in broken:
+            return _fail("AssertionError: expected 3, got -1\n", exit_code=1)
         return _fail("tests failed\n", exit_code=1)
 
     def _require(self, sandbox_id: str, *, allow_closed: bool = True) -> _SandboxState:

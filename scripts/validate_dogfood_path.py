@@ -25,9 +25,12 @@ async def main() -> None:
         OUTPUT.unlink()
 
     turns = [
-        tool_turn("run_tests", {"command": "pytest"}),
-        tool_turn("write_file", {"path": "__tests_pass", "content": "1"}),
-        tool_turn("run_tests", {"command": "pytest"}),
+        tool_turn("run_tests", {"command": "python test_broken.py"}),
+        tool_turn(
+            "write_file",
+            {"path": "broken.py", "content": "def add(a, b):\n    return a + b\n"},
+        ),
+        tool_turn("run_tests", {"command": "python test_broken.py"}),
         final_turn("fixed"),
     ]
     # Scripted-style responses via fake SGLang router so we exercise the
@@ -46,6 +49,8 @@ async def main() -> None:
             },
         }
 
+    from daytona_gym.adapters.slime._coding_seed import CODING_SEED_FILES
+
     runtime = FakeEnvironmentRuntime()
     # Make second pytest succeed by scripting write then tests via fake files.
     args = make_args(
@@ -56,6 +61,7 @@ async def main() -> None:
         daytona_project_id="coding-rl",
         daytona_worker_id="local-dev",
         daytona_training_step=1,
+        daytona_seed_files=dict(CODING_SEED_FILES),
     )
     args.daytona_generator = None
     args.sglang_router_ip = "127.0.0.1"

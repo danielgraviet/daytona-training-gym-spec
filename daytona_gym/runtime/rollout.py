@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,7 @@ from daytona_gym.runtime.types import (
     EnvironmentHandle,
     EnvironmentSpec,
     ToolAction,
+    ToolName,
     ToolResult,
     TrajectoryEvent,
 )
@@ -60,6 +62,8 @@ class RolloutRequest:
     worker_id: str | None = None
     training_step: int | str | None = None
     rollout_batch_id: str | None = None
+    # Relative paths → file contents written after sandbox create (before generate).
+    seed_files: Mapping[str, str] = field(default_factory=dict)
 
 
 class RolloutRunner:
@@ -104,6 +108,7 @@ class RolloutRunner:
                     sandbox_id = env.sandbox_id
                     ids = {**ids, "sandbox_id": sandbox_id}
                     rollout_span.set_attribute("sandbox_id", sandbox_id)
+                    await self._seed_files(env, request, ids)
                     conversation = request.prompt
                     for _turn in range(request.max_turns):
                         generation, gen_event = await self._generate(
@@ -217,6 +222,32 @@ class RolloutRunner:
                 time.perf_counter() - started,
                 status=status,
             )
+
+    async def _seed_files(
+        self,
+        env: EnvironmentHandle,
+        request: RolloutRequest,
+        ids: dict[str, object],
+    ) -> None:
+        if not request.seed_files:
+            return
+        with self._tracer.span("sandbox.seed", **ids) as span:
+            span.set_attribute("file_count", len(request.seed_files))
+            for path, content in request.seed_files.items():
+                result = await self._runtime.execute(
+                    env,
+                    ToolAction(
+                        name=ToolName.WRITE_FILE,
+                        arguments={"path": path, "content": content},
+                        timeout_seconds=request.tool_timeout_seconds,
+                    ),
+                )
+                if not result.ok:
+                    raise DaytonaError(
+                        ErrorCode.TOOL_FAILED,
+                        f"seed write failed for {path!r}",
+                        details={"path": path, "exit_code": result.exit_code},
+                    )
 
     async def _generate(
         self,

@@ -48,10 +48,18 @@ def _slime_tokenizer(args: Any) -> Tokenizer | None:
 
     class _HFTokenizerAdapter:
         def encode(self, text: str) -> list[int]:
+            # Prefer .encode(): calling the tokenizer may return a BatchEncoding
+            # that is not a dict subclass (transformers 5+), and list(batch)
+            # yields string keys — which later crashes slime tensorize.
+            encode_fn = getattr(tokenizer, "encode", None)
+            if callable(encode_fn):
+                return [int(t) for t in encode_fn(text, add_special_tokens=False)]
             encoded = tokenizer(text, add_special_tokens=False)
-            if isinstance(encoded, dict):
-                return list(encoded["input_ids"])
-            return list(encoded)
+            if isinstance(encoded, dict) or hasattr(encoded, "get"):
+                return [int(t) for t in encoded["input_ids"]]
+            if hasattr(encoded, "input_ids"):
+                return [int(t) for t in encoded.input_ids]
+            return [int(t) for t in encoded]
 
     return _HFTokenizerAdapter()
 
@@ -95,9 +103,11 @@ def _apply_with_append(
     *,
     args: Any | None,
 ) -> None:
-    existing = list(getattr(sample, "tokens", []) or [])
-    if not existing:
-        sample.tokens = tokenizer.encode(trajectory.prompt)
+    raw_tokens = getattr(sample, "tokens", None)
+    if isinstance(raw_tokens, str) or not raw_tokens:
+        sample.tokens = [int(t) for t in tokenizer.encode(trajectory.prompt)]
+    else:
+        sample.tokens = [int(t) for t in raw_tokens]
     sample.response = ""
     sample.response_length = 0
     sample.loss_mask = []
