@@ -76,7 +76,16 @@
 
 - Job `raysubmit_qMmVkw1ZeGapWCCi` — `tools run_tests=1`; timeline seed → `tool.run_tests` → generate → finalize
 
-## Missing product pieces (for external partner)
+17. **Edge `tool_stall` (2026-09-21 H100, job `raysubmit_KA2V83ueywsGuzuV`):**
+    Bootstrap was `python -c "import time; time.sleep(120)"` with
+    `DAYTONA_TOOL_TIMEOUT_SECONDS=5`. Expected `tool_timeout` / `aborted`.
+    Actual: `status=failed`, `error_code=tool_failed`, wall ~9.3s, `run_tests×1`,
+    job raised in `_raise_if_unusable`. Telemetry landed (`dg stats` OK).
+    Likely Daytona/SDK killed the exec without a message matching
+    `_looks_like_timeout` (`timed out` / `timeout exceeded`), so
+    `_reraise_sdk` mapped it to `TOOL_FAILED` instead of `TOOL_TIMEOUT`.
+    Customer impact: stall looks like a generic tool crash in dashboards.
+
 
 - Harbor adapter (second after Slime)
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
