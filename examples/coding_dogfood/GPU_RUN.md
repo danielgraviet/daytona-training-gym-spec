@@ -44,3 +44,30 @@ tools run_tests=1
 ```
 
 Notes: coding seed + concurrency=2 + preflight OK on RunPod A100; 0.5B/1.5B skip JSON tools — bootstrap supplies `tool.run_tests`. Bootstrap must travel via Ray `runtime_env` env vars (`DAYTONA_BOOTSTRAP_RUN_TESTS*` / `DAYTONA_SEED_CODING`), not only `args` setattr. See `FRICTION.md`.
+
+## Stress / scale (H100)
+
+More sandboxes ≈ `BATCH_SIZE * N_SAMPLES` (capped by `DAYTONA_MAX_CONCURRENCY`).
+More train updates ≈ `NUM_ROLLOUT`.
+
+```bash
+cd /root/daytona-training-gym-spec && git pull && pip install -e .
+rm -f runs/dogfood.jsonl
+
+MODEL_SCRIPT=qwen2.5-3B.sh \
+  HF_CHECKPOINT=/root/Qwen2.5-3B-Instruct/ \
+  REF_LOAD=/root/Qwen2.5-3B-Instruct_torch_dist/ \
+  PROMPT_DATA=/root/daytona-training-gym-spec/examples/coding_dogfood/prompts/coding_pack.jsonl \
+  BATCH_SIZE=4 \
+  N_SAMPLES=2 \
+  NUM_ROLLOUT=5 \
+  DAYTONA_MAX_CONCURRENCY=8 \
+  SGLANG_MEM=0.5 \
+  ROLLOUT_TEMP=0.2 \
+  bash examples/coding_dogfood/run_on_slime_pod.sh
+
+dg --list-rollouts
+dg -r rollout_0
+```
+
+If Daytona rate-limits or the GPU OOMs, drop to `BATCH_SIZE=2` / `DAYTONA_MAX_CONCURRENCY=4`.

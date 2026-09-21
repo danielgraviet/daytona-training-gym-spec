@@ -8,10 +8,10 @@
 #
 # Usage:
 #   bash examples/coding_dogfood/run_on_slime_pod.sh
-#   MODEL_SCRIPT=qwen2.5-1.5B.sh \
-#     HF_CHECKPOINT=/root/Qwen2.5-1.5B-Instruct/ \
-#     REF_LOAD=/root/Qwen2.5-1.5B-Instruct_torch_dist/ \
-#     bash examples/coding_dogfood/run_on_slime_pod.sh
+#   MODEL_SCRIPT=qwen2.5-3B.sh HF_CHECKPOINT=... REF_LOAD=... bash ...
+#   # stress (more sandboxes + train steps):
+#   BATCH_SIZE=4 N_SAMPLES=2 NUM_ROLLOUT=5 DAYTONA_MAX_CONCURRENCY=8 \
+#     PROMPT_DATA=.../coding_pack.jsonl bash examples/coding_dogfood/run_on_slime_pod.sh
 
 set -ex
 
@@ -22,8 +22,11 @@ TELEMETRY_PATH="${DAYTONA_TELEMETRY_PATH:-$REPO/runs/dogfood.jsonl}"
 PROMPT_DATA="${PROMPT_DATA:-$REPO/examples/coding_dogfood/prompts/coding_one.jsonl}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 N_SAMPLES="${N_SAMPLES:-1}"
-GLOBAL_BATCH="${GLOBAL_BATCH:-$BATCH_SIZE}"
-MAX_CONCURRENCY="${DAYTONA_MAX_CONCURRENCY:-$BATCH_SIZE}"
+GLOBAL_BATCH="${GLOBAL_BATCH:-$((BATCH_SIZE * N_SAMPLES))}"
+MAX_CONCURRENCY="${DAYTONA_MAX_CONCURRENCY:-$((BATCH_SIZE * N_SAMPLES))}"
+NUM_ROLLOUT="${NUM_ROLLOUT:-1}"
+NUM_STEPS_PER_ROLLOUT="${NUM_STEPS_PER_ROLLOUT:-1}"
+SAVE_INTERVAL="${SAVE_INTERVAL:-9999}"
 MODEL_SCRIPT="${MODEL_SCRIPT:-qwen2.5-0.5B.sh}"
 HF_CHECKPOINT="${HF_CHECKPOINT:-/root/Qwen2.5-0.5B-Instruct/}"
 REF_LOAD="${REF_LOAD:-/root/Qwen2.5-0.5B-Instruct_torch_dist/}"
@@ -51,6 +54,13 @@ printf '%s' "$DAYTONA_API_KEY" > "$KEY_FILE"
 chmod 600 "$KEY_FILE"
 export DAYTONA_API_KEY_FILE="$KEY_FILE"
 
+echo "=== Daytona dogfood scale ==="
+echo "  prompts=$PROMPT_DATA"
+echo "  batch=$BATCH_SIZE n_samples=$N_SAMPLES global_batch=$GLOBAL_BATCH"
+echo "  num_rollout=$NUM_ROLLOUT steps_per_rollout=$NUM_STEPS_PER_ROLLOUT"
+echo "  daytona_max_concurrency=$MAX_CONCURRENCY"
+echo "  model=$MODEL_SCRIPT hf=$HF_CHECKPOINT"
+
 echo "=== Daytona preflight (fail fast before Slime boot) ==="
 python -m daytona_gym.preflight --timeout-seconds 90
 
@@ -67,7 +77,7 @@ CKPT_ARGS=(
    --hf-checkpoint "$HF_CHECKPOINT"
    --ref-load "$REF_LOAD"
    --save /tmp/slime_coding_dogfood_save/
-   --save-interval 9999
+   --save-interval "$SAVE_INTERVAL"
 )
 
 ROLLOUT_ARGS=(
@@ -75,10 +85,10 @@ ROLLOUT_ARGS=(
    --input-key prompt
    --label-key label
    # Plain prompt: chat-template + naive concat after <|im_end|> corrupts multi-turn context.
-   --num-rollout 1
+   --num-rollout "$NUM_ROLLOUT"
    --rollout-batch-size "$BATCH_SIZE"
    --n-samples-per-prompt "$N_SAMPLES"
-   --num-steps-per-rollout 1
+   --num-steps-per-rollout "$NUM_STEPS_PER_ROLLOUT"
    --global-batch-size "$GLOBAL_BATCH"
    --rollout-max-response-len "$MAX_RESP_LEN"
    --rollout-temperature "$ROLLOUT_TEMP"
@@ -174,4 +184,5 @@ ray job submit --address="http://127.0.0.1:8265" \
 
 echo "Inspect traces:"
 echo "  dg"
-echo "  dg $TELEMETRY_PATH"
+echo "  dg --list-rollouts"
+echo "  dg -r rollout_0"
