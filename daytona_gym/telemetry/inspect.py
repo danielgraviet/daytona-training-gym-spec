@@ -138,8 +138,10 @@ def _print_rollout_list(
         status = outcome.get("status") or "?"
         reward = outcome.get("reward")
         reward_s = f"{reward}" if reward is not None else "-"
+        err = outcome.get("error_code")
+        err_s = f"  [{err}]" if err else ""
         total = timeline[0].duration_seconds if timeline else 0.0
-        print(f"  {rollout_id:<12}  {status:<10}  reward={reward_s:<5}  {_fmt_secs(total)}")
+        print(f"  {rollout_id:<12}  {status:<10}  reward={reward_s:<5}  {_fmt_secs(total)}{err_s}")
 
 
 def _print_stats(
@@ -153,6 +155,7 @@ def _print_stats(
 
     statuses: Counter[str] = Counter()
     rewards: Counter[object] = Counter()
+    error_codes: Counter[str] = Counter()
     reward_values: list[float] = []
     walls: list[float] = []
     tools: Counter[str] = Counter()
@@ -163,6 +166,8 @@ def _print_stats(
         statuses[str(outcome.get("status") or "?")] += 1
         reward = outcome.get("reward")
         rewards[reward] += 1
+        if outcome.get("error_code"):
+            error_codes[str(outcome["error_code"])] += 1
         if isinstance(reward, (int, float)):
             reward_values.append(float(reward))
         if timeline:
@@ -181,6 +186,8 @@ def _print_stats(
     if reward_values:
         mean_bit = f"  mean={sum(reward_values) / len(reward_values):.3f}"
     print(f"reward  {reward_bits}{mean_bit}")
+    if error_codes:
+        print(f"errors  {'  '.join(f'{k}={v}' for k, v in sorted(error_codes.items()))}")
     if walls:
         print(
             "wall    "
@@ -266,7 +273,7 @@ def _outcome_fields(
             if span.name != name:
                 continue
             attrs = span.attributes
-            for key in ("status", "reward", "sandbox_id", "tokens", "response_tokens"):
+            for key in ("status", "reward", "sandbox_id", "tokens", "response_tokens", "error_code"):
                 if key in attrs and attrs[key] not in (None, ""):
                     fields.setdefault(key, attrs[key])
     if "status" not in fields:
@@ -274,10 +281,18 @@ def _outcome_fields(
             if step.name == "rollout" and step.attributes.get("status"):
                 fields["status"] = step.attributes["status"]
                 break
+            if step.name == "rollout" and step.attributes.get("error_code"):
+                fields.setdefault("error_code", step.attributes["error_code"])
         if "status" not in fields:
             status_counts = counter_by_label(store.metrics_named("rollout.count"), "status")
             if status_counts:
                 fields["status"] = next(iter(status_counts))
+    if "error_code" not in fields:
+        for span in spans:
+            code = span.attributes.get("error_code")
+            if code:
+                fields["error_code"] = code
+                break
     if "reward" not in fields:
         derived = _derive_reward_from_tools(spans)
         if derived is not None:

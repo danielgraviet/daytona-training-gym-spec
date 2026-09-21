@@ -81,6 +81,7 @@
 - Harbor adapter (second after Slime)
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
 - Shorter inspect UX — shipped `dg` CLI (`8557802`); pull + `pip install -e .` on pod
+- Edge recipes — `run_edge_case.sh` (tool_stall / rollout_budget / concurrency_storm / mem_pressure / hard_prompts / wrong_bootstrap)
 
 ## Errors / stack traces worth keeping
 

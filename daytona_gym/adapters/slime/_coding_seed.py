@@ -1,4 +1,4 @@
-"""Built-in coding dogfood seed (broken add) for sandbox tool-loop tests."""
+"""Built-in coding dogfood seeds for sandbox tool-loop tests."""
 
 from __future__ import annotations
 
@@ -13,7 +13,40 @@ CODING_SEED_FILES: dict[str, str] = {
     ),
 }
 
+# Multi-file customer-shaped task: bug lives in util.py, tests import broken.py.
+MULTIFILE_SEED_FILES: dict[str, str] = {
+    "util.py": "def mul(a, b):\n    return a + b\n",
+    "broken.py": (
+        "from util import mul\n"
+        "\n"
+        "def product(a, b):\n"
+        "    return mul(a, b)\n"
+    ),
+    "test_broken.py": (
+        "from broken import product\n"
+        "\n"
+        "result = product(2, 3)\n"
+        "assert result == 6, f'expected 6, got {result}'\n"
+        "print('OK')\n"
+    ),
+}
+
+SEED_PROFILES: dict[str, dict[str, str]] = {
+    "basic": CODING_SEED_FILES,
+    "multifile": MULTIFILE_SEED_FILES,
+}
+
 CODING_RUN_TESTS_COMMAND = "python test_broken.py"
+
+
+def resolve_seed_profile(name: str | None) -> dict[str, str]:
+    """Return a copy of the named seed profile (default: basic)."""
+    key = (name or "basic").strip().lower() or "basic"
+    files = SEED_PROFILES.get(key)
+    if files is None:
+        known = ", ".join(sorted(SEED_PROFILES))
+        raise ValueError(f"unknown DAYTONA_SEED_PROFILE={name!r}; expected one of: {known}")
+    return dict(files)
 
 CODING_DOGFOOD_PROMPT = f"""\
 You are fixing a tiny Python bug in a sandbox workspace.

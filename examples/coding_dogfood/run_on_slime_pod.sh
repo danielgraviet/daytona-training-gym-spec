@@ -60,6 +60,9 @@ echo "  batch=$BATCH_SIZE n_samples=$N_SAMPLES global_batch=$GLOBAL_BATCH"
 echo "  num_rollout=$NUM_ROLLOUT steps_per_rollout=$NUM_STEPS_PER_ROLLOUT"
 echo "  daytona_max_concurrency=$MAX_CONCURRENCY"
 echo "  model=$MODEL_SCRIPT hf=$HF_CHECKPOINT"
+echo "  seed_profile=${DAYTONA_SEED_PROFILE:-basic}"
+echo "  timeouts: rollout=${DAYTONA_TIMEOUT_SECONDS:--} tool=${DAYTONA_TOOL_TIMEOUT_SECONDS:--} sandbox=${DAYTONA_SANDBOX_TIMEOUT_SECONDS:--}"
+echo "  allow_aborted=${DAYTONA_ALLOW_ABORTED:-0}"
 
 echo "=== Daytona preflight (fail fast before Slime boot) ==="
 python -m daytona_gym.preflight --timeout-seconds 90
@@ -149,6 +152,7 @@ env_vars = {
     "DAYTONA_TELEMETRY_PATH": os.environ["TELEMETRY_PATH"],
     "DAYTONA_MAX_CONCURRENCY": os.environ.get("DAYTONA_MAX_CONCURRENCY", "1"),
     "DAYTONA_SEED_CODING": os.environ.get("DAYTONA_SEED_CODING", "1"),
+    "DAYTONA_SEED_PROFILE": os.environ.get("DAYTONA_SEED_PROFILE", "basic"),
     "DAYTONA_BOOTSTRAP_RUN_TESTS": os.environ.get("DAYTONA_BOOTSTRAP_RUN_TESTS", "1"),
     "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD": os.environ.get(
         "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD", "python test_broken.py"
@@ -156,7 +160,18 @@ env_vars = {
     "DAYTONA_REQUIRE_PASSING_TESTS": os.environ.get(
         "DAYTONA_REQUIRE_PASSING_TESTS", "1"
     ),
+    "DAYTONA_ALLOW_ABORTED": os.environ.get("DAYTONA_ALLOW_ABORTED", "0"),
 }
+# Optional knobs — only forward when set so workers mirror the launcher.
+for key in (
+    "DAYTONA_TIMEOUT_SECONDS",
+    "DAYTONA_TOOL_TIMEOUT_SECONDS",
+    "DAYTONA_SANDBOX_TIMEOUT_SECONDS",
+    "DAYTONA_MAX_TURNS",
+    "DAYTONA_RUN_ID",
+):
+    if os.environ.get(key):
+        env_vars[key] = os.environ[key]
 if "DAYTONA_API_KEY" in env_vars:
     print("refusing to put DAYTONA_API_KEY in Ray runtime_env", file=sys.stderr)
     raise SystemExit(2)
@@ -184,5 +199,6 @@ ray job submit --address="http://127.0.0.1:8265" \
 
 echo "Inspect traces:"
 echo "  dg"
-echo "  dg --list-rollouts"
+echo "  dg ls"
+echo "  dg stats"
 echo "  dg -r rollout_0"

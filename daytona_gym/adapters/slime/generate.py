@@ -31,14 +31,35 @@ def _env_truthy(name: str, default: bool = False) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _resolve_float_arg(args: Any, attr: str, env_name: str) -> float | None:
+    value = getattr(args, attr, None)
+    if value is not None:
+        return float(value)
+    raw = os.environ.get(env_name)
+    if raw is None or not str(raw).strip():
+        return None
+    return float(raw)
+
+
+def _resolve_int_arg(args: Any, attr: str, env_name: str, default: int) -> int:
+    value = getattr(args, attr, None)
+    if value is not None:
+        return int(value)
+    raw = os.environ.get(env_name)
+    if raw is None or not str(raw).strip():
+        return default
+    return int(raw)
+
+
 def _resolve_seed_files(args: Any) -> dict[str, str]:
     files = dict(getattr(args, "daytona_seed_files", None) or {})
     if files:
         return files
-    if _env_truthy("DAYTONA_SEED_CODING", default=False):
-        from daytona_gym.adapters.slime._coding_seed import CODING_SEED_FILES
+    profile = os.environ.get("DAYTONA_SEED_PROFILE") or getattr(args, "daytona_seed_profile", None)
+    if profile or _env_truthy("DAYTONA_SEED_CODING", default=False):
+        from daytona_gym.adapters.slime._coding_seed import resolve_seed_profile
 
-        return dict(CODING_SEED_FILES)
+        return resolve_seed_profile(str(profile) if profile else "basic")
     return {}
 
 
@@ -84,10 +105,21 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         flush=True,
     )
 
+    sandbox_timeout = _resolve_float_arg(
+        args, "daytona_sandbox_timeout_seconds", "DAYTONA_SANDBOX_TIMEOUT_SECONDS"
+    )
+    rollout_timeout = _resolve_float_arg(
+        args, "daytona_timeout_seconds", "DAYTONA_TIMEOUT_SECONDS"
+    )
+    tool_timeout = _resolve_float_arg(
+        args, "daytona_tool_timeout_seconds", "DAYTONA_TOOL_TIMEOUT_SECONDS"
+    )
+    max_turns = _resolve_int_arg(args, "daytona_max_turns", "DAYTONA_MAX_TURNS", 8)
+
     spec = EnvironmentSpec(
         image=getattr(args, "daytona_image", None),
         snapshot=getattr(args, "daytona_snapshot", None),
-        timeout_seconds=getattr(args, "daytona_sandbox_timeout_seconds", None),
+        timeout_seconds=sandbox_timeout,
         metadata={
             "run_id": run_id,
             "rollout_id": rollout_id,
@@ -100,12 +132,12 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         prompt=prompt_text(sample),
         spec=spec,
         sampling_params=dict(sampling_params or {}),
-        timeout_seconds=getattr(args, "daytona_timeout_seconds", None),
-        max_turns=int(getattr(args, "daytona_max_turns", 8)),
+        timeout_seconds=rollout_timeout,
+        max_turns=max_turns,
         sample_id=sample_id,
         project_id=getattr(args, "daytona_project_id", None),
         stdout_limit=int(getattr(args, "daytona_stdout_limit", 16_384)),
-        tool_timeout_seconds=getattr(args, "daytona_tool_timeout_seconds", None),
+        tool_timeout_seconds=tool_timeout,
         worker_id=getattr(args, "daytona_worker_id", None),
         training_step=getattr(args, "daytona_training_step", None),
         rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
@@ -152,6 +184,8 @@ def _record_outcome(
             span.set_attribute("status", str(meta["status"]))
         if meta.get("reward") is not None:
             span.set_attribute("reward", float(meta["reward"]))
+        if meta.get("error_code") is not None:
+            span.set_attribute("error_code", str(meta["error_code"]))
         if token_count is not None:
             span.set_attribute("tokens", int(token_count))
         if meta.get("sandbox_id"):
@@ -164,8 +198,18 @@ def _raise_if_unusable(sample: Any, trajectory: DaytonaTrajectory) -> None:
     Slime boots SGLang+Megatron before custom generate runs. When sandbox
     provision fails we used to return a hollow sample; training then died
     minutes later with an opaque TypeError in KL/advantages.
+
+    Set ``DAYTONA_ALLOW_ABORTED=1`` to keep training when a rollout hits an
+    expected abort (tool/rollout timeout) — useful for mixed stress batches.
+    Hard failures (provision, platform) still raise.
     """
     if trajectory.status not in {"failed", "aborted"}:
+        return
+    if trajectory.status == "aborted" and _env_truthy("DAYTONA_ALLOW_ABORTED", default=False):
+        try:
+            sample.remove_sample = True
+        except Exception:
+            pass
         return
     code = trajectory.error_code or "platform_error"
     message = trajectory.error_message or "daytona rollout failed"
