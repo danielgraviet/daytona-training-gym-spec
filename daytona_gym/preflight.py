@@ -13,6 +13,7 @@ import sys
 
 from daytona_gym.runtime.daytona import DaytonaEnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
+from daytona_gym.runtime.security import resolve_daytona_api_key
 from daytona_gym.runtime.types import EnvironmentSpec
 
 
@@ -23,11 +24,11 @@ async def check_daytona(
     timeout_seconds: float = 60,
 ) -> None:
     """Create and destroy one ephemeral sandbox. Raises DaytonaError on failure."""
-    key = api_key if api_key is not None else os.environ.get("DAYTONA_API_KEY")
+    key = resolve_daytona_api_key(api_key=api_key)
     if not key:
         raise DaytonaError(
             ErrorCode.PLATFORM_ERROR,
-            "DAYTONA_API_KEY is not set",
+            "DAYTONA_API_KEY is not set (or DAYTONA_API_KEY_FILE is missing/empty)",
         )
     runtime = DaytonaEnvironmentRuntime(
         api_key=key,

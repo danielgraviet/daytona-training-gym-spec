@@ -189,7 +189,7 @@ Tool / environment tokens should be **`loss_mask=0`** (and usually dummy logprob
 ### Things that break (Slime / DX)
 
 - **Long fail loop:** engines start before custom generate → bad `DAYTONA_API_KEY` only fails after minutes → then Megatron TypeError. Fix: **preflight** credentials before `ray job submit`.  
-- Ray `runtime_env` can **print secrets** in `ray job list`.  
+- Ray `runtime_env` can **print secrets** in `ray job list` — mitigated via `DAYTONA_API_KEY_FILE`.
 - Custom generate import path must be importable on **Ray workers** (`PYTHONPATH`).  
 - Small models ignore tool JSON → rollout “succeeds” with `reward=None` and no tool spans.
 

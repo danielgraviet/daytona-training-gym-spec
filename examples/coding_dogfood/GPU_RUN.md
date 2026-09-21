@@ -20,6 +20,8 @@ python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl --rollout rollout_0
 
 Expect a log line like `[daytona-gym] generate seed=[...] bootstrap='python test_broken.py'`.
 
+After submit, `ray job list` should show `DAYTONA_API_KEY_FILE` (path only), **not** `DAYTONA_API_KEY`.
+
 ## Pass criteria
 
 - [x] Sandbox provisioned and cleaned up

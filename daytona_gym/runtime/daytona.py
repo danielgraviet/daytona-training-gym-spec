@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Any, NoReturn
 
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
-from daytona_gym.runtime.security import DEFAULT_CAPTURE_LIMIT, clip_text
+from daytona_gym.runtime.security import DEFAULT_CAPTURE_LIMIT, clip_text, resolve_daytona_api_key
 from daytona_gym.runtime.types import (
     EnvironmentHandle,
     EnvironmentSpec,
@@ -73,8 +73,11 @@ class DaytonaEnvironmentRuntime:
     @classmethod
     def from_args(cls, args: Any) -> DaytonaEnvironmentRuntime:
         timeout = getattr(args, "daytona_sandbox_timeout_seconds", None)
+        api_key = getattr(args, "daytona_api_key", None)
+        if not api_key:
+            api_key = resolve_daytona_api_key()
         return cls(
-            api_key=getattr(args, "daytona_api_key", None),
+            api_key=api_key,
             api_url=getattr(args, "daytona_api_url", None),
             target=getattr(args, "daytona_target", None),
             auto_stop_interval=int(getattr(args, "daytona_auto_stop_interval", 0) or 0),

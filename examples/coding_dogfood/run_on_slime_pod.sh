@@ -42,6 +42,14 @@ export DAYTONA_BOOTSTRAP_RUN_TESTS_CMD="${DAYTONA_BOOTSTRAP_RUN_TESTS_CMD:-pytho
 mkdir -p "$(dirname "$TELEMETRY_PATH")"
 : "${DAYTONA_API_KEY:?set DAYTONA_API_KEY}"
 
+# Keep the API key out of Ray --runtime-env-json (ray job list dumps it).
+# Workers resolve via DAYTONA_API_KEY_FILE → resolve_daytona_api_key().
+KEY_FILE="${DAYTONA_API_KEY_FILE:-/tmp/daytona_gym_api_key}"
+umask 077
+printf '%s' "$DAYTONA_API_KEY" > "$KEY_FILE"
+chmod 600 "$KEY_FILE"
+export DAYTONA_API_KEY_FILE="$KEY_FILE"
+
 echo "=== Daytona preflight (fail fast before Slime boot) ==="
 python -m daytona_gym.preflight --timeout-seconds 90
 
@@ -119,14 +127,13 @@ MISC_ARGS=(
 
 ray start --head --node-ip-address 127.0.0.1 --num-gpus 1 --disable-usage-stats
 
-# Build runtime env JSON with required secrets (do not commit the expanded file).
+# Build runtime env JSON — never put DAYTONA_API_KEY here (ray job list dumps it).
 RUNTIME_ENV=$(python3 - <<PY
-import json, os
-print(json.dumps({
-  "env_vars": {
+import json, os, sys
+env_vars = {
     "PYTHONPATH": f"{os.environ['MEGATRON_ROOT']}:{os.environ['REPO']}",
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "DAYTONA_API_KEY": os.environ["DAYTONA_API_KEY"],
+    "DAYTONA_API_KEY_FILE": os.environ["DAYTONA_API_KEY_FILE"],
     "DAYTONA_API_URL": os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api"),
     "DAYTONA_TELEMETRY_PATH": os.environ["TELEMETRY_PATH"],
     "DAYTONA_MAX_CONCURRENCY": os.environ.get("DAYTONA_MAX_CONCURRENCY", "1"),
@@ -135,8 +142,12 @@ print(json.dumps({
     "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD": os.environ.get(
         "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD", "python test_broken.py"
     ),
-  }
-}))
+}
+if "DAYTONA_API_KEY" in env_vars:
+    print("refusing to put DAYTONA_API_KEY in Ray runtime_env", file=sys.stderr)
+    raise SystemExit(2)
+print("Ray runtime_env env_vars keys:", sorted(env_vars.keys()), file=sys.stderr)
+print(json.dumps({"env_vars": env_vars}))
 PY
 )
 

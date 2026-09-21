@@ -25,7 +25,7 @@
 4. `transformers` 5.x tokenizer callable → string token ids → slime tensorize crash. Fix: `tokenizer.encode(...)`
 5. Async JSONL exporter needs explicit `flush()` before Ray workers exit
 6. OpenSSH `BatchMode` fails on RunPod (“doesn't support PTY”); interactive SSH works
-7. API key in shell history / chat / `ray job list` `runtime_env` — rotate after dogfood
+7. API key in shell history / chat / formerly in `ray job list` `runtime_env` — **mitigated:** launch script writes `/tmp/daytona_gym_api_key` and passes only `DAYTONA_API_KEY_FILE` in Ray runtime_env; still rotate keys that already leaked
 8. **Qwen2.5-0.5B / 1.5B ignore JSON tool protocol** → model emits free text as `final`, so no model-driven `tool.*` spans and previously `reward=None`. Mitigation: `daytona_bootstrap_run_tests` (default on in `generate_dogfood`) runs `python test_broken.py` once after seed so traces always include `tool.run_tests` and reward is at least `0.0`.
 9. **Bootstrap via `args` setattr alone can silently no-op on Ray workers** — jobs showed `sandbox.seed` but skipped `tool.run_tests` until `DAYTONA_BOOTSTRAP_RUN_TESTS` / `DAYTONA_BOOTSTRAP_RUN_TESTS_CMD` / `DAYTONA_SEED_CODING` were injected in Ray `runtime_env` and resolved inside `generate.py` (`f97d2a9`). Prefer env for anything the worker must see.
 10. Pod `git pull` blocked by leftover ad-hoc patches — `git checkout -- . && git clean -fd`
@@ -52,7 +52,7 @@
 ## Missing product pieces (for external partner)
 
 - Tool-loop on a model that emits JSON tools (≥4B) — bootstrap covers forced first `run_tests` today
-- Redact secrets from Ray runtime_env dumps / docs warning
+- Redact secrets from Ray runtime_env dumps / docs warning — **done:** key file path only in runtime_env
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
 
 ## Errors / stack traces worth keeping

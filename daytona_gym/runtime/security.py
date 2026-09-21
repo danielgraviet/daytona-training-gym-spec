@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 _SECRET_FRAGMENTS = (
@@ -16,6 +18,8 @@ _SECRET_FRAGMENTS = (
 )
 
 DEFAULT_CAPTURE_LIMIT = 16_384
+_API_KEY_ENV = "DAYTONA_API_KEY"
+_API_KEY_FILE_ENV = "DAYTONA_API_KEY_FILE"
 
 
 def clip_text(text: str, limit: int = DEFAULT_CAPTURE_LIMIT) -> tuple[str, bool]:
@@ -29,6 +33,30 @@ def clip_text(text: str, limit: int = DEFAULT_CAPTURE_LIMIT) -> tuple[str, bool]
 def is_secret_key(key: str) -> bool:
     lowered = key.lower().replace("-", "_")
     return any(fragment in lowered for fragment in _SECRET_FRAGMENTS)
+
+
+def resolve_daytona_api_key(
+    *,
+    api_key: str | None = None,
+    key_file: str | None = None,
+) -> str | None:
+    """Resolve the Daytona API key without requiring it in Ray runtime_env.
+
+    Prefer an explicit key, then ``DAYTONA_API_KEY``, then the contents of
+    ``DAYTONA_API_KEY_FILE`` (or ``key_file``). Ray ``job list`` dumps
+    ``runtime_env`` literally — keep secrets on disk / in the shell, not in
+    ``--runtime-env-json``.
+    """
+    if api_key is not None and str(api_key).strip():
+        return str(api_key).strip()
+    env_key = os.environ.get(_API_KEY_ENV)
+    if env_key is not None and env_key.strip():
+        return env_key.strip()
+    path = key_file if key_file is not None else os.environ.get(_API_KEY_FILE_ENV)
+    if not path:
+        return None
+    raw = Path(path).read_text(encoding="utf-8")
+    return raw.strip() or None
 
 
 def redact_env_vars(env: Mapping[str, str]) -> dict[str, str]:

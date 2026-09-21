@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.fake import FakeEnvironmentRuntime
 from daytona_gym.runtime.security import clip_text, redact_env_vars, sanitize_attributes
@@ -40,6 +42,20 @@ def test_redact_env_vars_hides_secrets() -> None:
     assert redacted["HOME"] == "/home/user"
     assert redacted["DAYTONA_API_KEY"] == "***"
     assert redacted["TOKEN"] == "***"
+
+
+def test_resolve_daytona_api_key_from_file(tmp_path: Path, monkeypatch) -> None:
+    from daytona_gym.runtime.security import resolve_daytona_api_key
+
+    monkeypatch.delenv("DAYTONA_API_KEY", raising=False)
+    monkeypatch.delenv("DAYTONA_API_KEY_FILE", raising=False)
+    key_path = tmp_path / "daytona.key"
+    key_path.write_text("file-secret\n", encoding="utf-8")
+    assert resolve_daytona_api_key(key_file=str(key_path)) == "file-secret"
+    monkeypatch.setenv("DAYTONA_API_KEY_FILE", str(key_path))
+    assert resolve_daytona_api_key() == "file-secret"
+    monkeypatch.setenv("DAYTONA_API_KEY", "env-wins")
+    assert resolve_daytona_api_key() == "env-wins"
 
 
 def test_sanitize_attributes_redacts_secrets_and_stringifies_objects() -> None:

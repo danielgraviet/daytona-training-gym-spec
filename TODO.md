@@ -27,7 +27,7 @@ Quick orientation for Daytona Training Gym × Slime GPU dogfood.
 - Models on disk: `Qwen2.5-0.5B-Instruct` (+ `_torch_dist`), `Qwen2.5-1.5B-Instruct` (+ `_torch_dist`)
 - Slime model script patch: `/root/slime/scripts/models/qwen2.5-1.5B.sh` → `--rotary-base 1000000` (was 10000)
 - Launch script may still be sed’d to 1.5B paths on the pod
-- **Rotate `DAYTONA_API_KEY`** — leaked in shell history, chat, and `ray job list` runtime_env
+- **Rotate `DAYTONA_API_KEY`** if an old key leaked in chat/`ray job list`; new runs use `DAYTONA_API_KEY_FILE` only in runtime_env
 
 ---
 
@@ -52,7 +52,7 @@ Quick orientation for Daytona Training Gym × Slime GPU dogfood.
 
 ### P1 — Product / DX follow-ups (CPU OK)
 
-- [ ] Redact or warn: Ray `runtime_env` dumps API keys in `ray job list`
+- [x] Keep `DAYTONA_API_KEY` out of Ray `runtime_env` (`DAYTONA_API_KEY_FILE` + `resolve_daytona_api_key`)
 - [ ] Optional: commit parameterized `run_on_slime_pod.sh` knobs for `MODEL_SCRIPT` / `HF_CHECKPOINT` if pod still uses sed
 - [ ] Add short “partner dogfood” blurb pointing at `examples/coding_dogfood/README.md` + preflight
 

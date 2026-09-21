@@ -53,6 +53,7 @@ def test_raise_if_unusable_noop_on_completed() -> None:
 @pytest.mark.asyncio
 async def test_preflight_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("DAYTONA_API_KEY", raising=False)
+    monkeypatch.delenv("DAYTONA_API_KEY_FILE", raising=False)
     with pytest.raises(DaytonaError) as caught:
         await check_daytona(api_key=None)
     assert "DAYTONA_API_KEY" in caught.value.message
@@ -60,6 +61,7 @@ async def test_preflight_requires_api_key(monkeypatch) -> None:
 
 def test_preflight_main_missing_key(monkeypatch, capsys) -> None:
     monkeypatch.delenv("DAYTONA_API_KEY", raising=False)
+    monkeypatch.delenv("DAYTONA_API_KEY_FILE", raising=False)
     assert preflight_main([]) == 1
     err = capsys.readouterr().err
     assert "preflight FAILED" in err
