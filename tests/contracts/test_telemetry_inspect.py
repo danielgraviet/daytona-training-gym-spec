@@ -44,4 +44,46 @@ def test_inspect_defaults_and_help(capsys) -> None:
     from daytona_gym.cli import main as cli_main
 
     assert cli_main(["--help"]) == 0
-    assert "dg" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "dg" in out
+    assert "dg ls" in out
+    assert "dg stats" in out
+
+
+async def test_dg_ls_and_stats(tmp_path: Path, capsys) -> None:
+    from daytona_gym.cli import main as cli_main
+
+    path = tmp_path / "dogfood.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    for index in (0, 1):
+        generator = ScriptedGenerator(
+            [
+                tool_turn("run_tests", {"command": "pytest"}),
+                final_turn("fixed"),
+            ]
+        )
+        sample = FakeSlimeSample(prompt="fix", index=index)
+        args = make_args(
+            runtime=runtime,
+            generator=generator,
+            daytona_telemetry_path=str(path),
+        )
+        try:
+            await generate(args, sample, {})
+            args.daytona_telemetry_store.flush()
+        finally:
+            args.daytona_telemetry_store.close()
+
+    assert cli_main(["ls", str(path)]) == 0
+    ls_out = capsys.readouterr().out
+    assert "2 rollouts" in ls_out
+    assert "rollout_0" in ls_out
+    assert "rollout_1" in ls_out
+    assert "reward=" in ls_out
+
+    assert cli_main(["stats", str(path)]) == 0
+    stats_out = capsys.readouterr().out
+    assert "n=2" in stats_out
+    assert "status" in stats_out
+    assert "reward" in stats_out
+    assert "tools" in stats_out

@@ -3,8 +3,9 @@
 Short forms (after ``pip install -e .``):
 
   dg
-  dg inspect
-  dg runs/dogfood.jsonl
+  dg ls
+  dg stats
+  dg -r rollout_0
   python -m daytona_gym
 """
 
@@ -31,6 +32,7 @@ _SHORT_NAMES = {
     "inference.generate": "generate",
     "rollout": "rollout",
 }
+_ROLLOUT_NUM = re.compile(r"^(.*?)(\d+)$")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,7 +55,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--list-rollouts",
         action="store_true",
-        help="List rollout ids and exit",
+        help="List rollouts (status / reward / wall) and exit",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Print aggregate status / reward / wall / tool stats and exit",
     )
     parser.add_argument(
         "--raw",
@@ -77,8 +84,10 @@ def main(argv: list[str] | None = None) -> int:
     store = InMemoryTelemetryStore.load_jsonl(path)
     rollout_ids = _rollout_ids(store)
     if args.list_rollouts:
-        for rollout_id in rollout_ids:
-            print(rollout_id)
+        _print_rollout_list(store, path, rollout_ids)
+        return 0
+    if args.stats:
+        _print_stats(store, path, rollout_ids)
         return 0
 
     if args.raw:
@@ -104,7 +113,93 @@ def _rollout_ids(store: InMemoryTelemetryStore) -> list[str]:
         rollout_id = str(span.attributes.get("rollout_id") or "")
         if rollout_id and rollout_id not in seen:
             seen.append(rollout_id)
-    return seen
+    return sorted(seen, key=_rollout_sort_key)
+
+
+def _rollout_sort_key(rollout_id: str) -> tuple[str, int, str]:
+    match = _ROLLOUT_NUM.match(rollout_id)
+    if match:
+        return (match.group(1), int(match.group(2)), "")
+    return (rollout_id, 0, "")
+
+
+def _print_rollout_list(
+    store: InMemoryTelemetryStore,
+    path: Path,
+    rollout_ids: list[str],
+) -> None:
+    if not rollout_ids:
+        print(f"{path.name}  (no rollouts)")
+        return
+    print(f"{path.name}  ·  {len(rollout_ids)} rollouts")
+    for rollout_id in rollout_ids:
+        timeline = reconstruct_rollout(store, rollout_id)
+        outcome = _outcome_fields(store, rollout_id, timeline)
+        status = outcome.get("status") or "?"
+        reward = outcome.get("reward")
+        reward_s = f"{reward}" if reward is not None else "-"
+        total = timeline[0].duration_seconds if timeline else 0.0
+        print(f"  {rollout_id:<12}  {status:<10}  reward={reward_s:<5}  {_fmt_secs(total)}")
+
+
+def _print_stats(
+    store: InMemoryTelemetryStore,
+    path: Path,
+    rollout_ids: list[str],
+) -> None:
+    if not rollout_ids:
+        print(f"{path.name}  (no rollouts)")
+        return
+
+    statuses: Counter[str] = Counter()
+    rewards: Counter[object] = Counter()
+    reward_values: list[float] = []
+    walls: list[float] = []
+    tools: Counter[str] = Counter()
+
+    for rollout_id in rollout_ids:
+        timeline = reconstruct_rollout(store, rollout_id)
+        outcome = _outcome_fields(store, rollout_id, timeline)
+        statuses[str(outcome.get("status") or "?")] += 1
+        reward = outcome.get("reward")
+        rewards[reward] += 1
+        if isinstance(reward, (int, float)):
+            reward_values.append(float(reward))
+        if timeline:
+            walls.append(float(timeline[0].duration_seconds))
+        for span in store.spans_for_rollout(rollout_id):
+            if span.name.startswith("tool."):
+                tools[_short_tool(str(span.attributes.get("tool") or span.name))] += 1
+
+    print(f"{path.name}  ·  n={len(rollout_ids)}")
+    print()
+    print(f"status  {'  '.join(f'{k}={v}' for k, v in sorted(statuses.items()))}")
+    reward_bits = "  ".join(
+        f"{('none' if k is None else k)}={v}" for k, v in sorted(rewards.items(), key=_reward_sort_key)
+    )
+    mean_bit = ""
+    if reward_values:
+        mean_bit = f"  mean={sum(reward_values) / len(reward_values):.3f}"
+    print(f"reward  {reward_bits}{mean_bit}")
+    if walls:
+        print(
+            "wall    "
+            f"p50={_fmt_secs(_percentile(walls, 50))}  "
+            f"p95={_fmt_secs(_percentile(walls, 95))}  "
+            f"max={_fmt_secs(max(walls))}"
+        )
+    if tools:
+        tool_bits = "  ".join(f"{name}×{count}" for name, count in tools.most_common())
+        print(f"tools   {tool_bits}")
+
+
+def _reward_sort_key(item: tuple[object, int]) -> tuple[int, float, str]:
+    key, _ = item
+    if key is None:
+        return (2, 0.0, "")
+    if isinstance(key, (int, float)):
+        return (0, float(key), "")
+    return (1, 0.0, str(key))
 
 
 def _print_readable(

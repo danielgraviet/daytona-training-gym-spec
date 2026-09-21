@@ -66,7 +66,8 @@ MODEL_SCRIPT=qwen2.5-3B.sh \
   ROLLOUT_TEMP=0.2 \
   bash examples/coding_dogfood/run_on_slime_pod.sh
 
-dg --list-rollouts
+dg ls
+dg stats
 dg -r rollout_0
 ```
 
