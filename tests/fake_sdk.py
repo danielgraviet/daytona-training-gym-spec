@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -50,6 +51,10 @@ class FakeSandboxProcess:
         self.commands.append({"command": command, "cwd": cwd, "env": env, "timeout": timeout})
         if self._sandbox.hang_exec:
             raise TimeoutError("timed out")
+        if self._sandbox.opaque_timeout:
+            # Mimic Daytona: burn most of the budget then raise a non-TimeoutError.
+            await asyncio.sleep(self._sandbox.opaque_delay)
+            raise RuntimeError(self._sandbox.opaque_message)
         if command.strip() == "false":
             return FakeExecuteResponse(exit_code=1, result="", stderr="false\n")
         if command.strip().startswith("echo "):
@@ -63,10 +68,21 @@ class FakeSandboxProcess:
 
 
 class FakeSandbox:
-    def __init__(self, sandbox_id: str, *, hang_exec: bool = False) -> None:
+    def __init__(
+        self,
+        sandbox_id: str,
+        *,
+        hang_exec: bool = False,
+        opaque_timeout: bool = False,
+        opaque_delay: float = 0.08,
+        opaque_message: str = "command execution failed",
+    ) -> None:
         self.id = sandbox_id
         self.files: dict[str, bytes] = {}
         self.hang_exec = hang_exec
+        self.opaque_timeout = opaque_timeout
+        self.opaque_delay = opaque_delay
+        self.opaque_message = opaque_message
         self.fs = FakeSandboxFs(self.files)
         self.process = FakeSandboxProcess(self)
         self.deleted = False
@@ -81,10 +97,16 @@ class FakeAsyncDaytona:
         fail_create: bool = False,
         fail_create_timeout: bool = False,
         hang_exec: bool = False,
+        opaque_timeout: bool = False,
+        opaque_delay: float = 0.08,
+        opaque_message: str = "command execution failed",
     ) -> None:
         self.fail_create = fail_create
         self.fail_create_timeout = fail_create_timeout
         self.hang_exec = hang_exec
+        self.opaque_timeout = opaque_timeout
+        self.opaque_delay = opaque_delay
+        self.opaque_message = opaque_message
         self.created: list[Any] = []
         self.deleted: list[str] = []
         self.closed = False
@@ -97,7 +119,13 @@ class FakeAsyncDaytona:
         if self.fail_create:
             raise RuntimeError("api rejected sandbox create")
         self._n += 1
-        sandbox = FakeSandbox(f"sbx_{self._n}", hang_exec=self.hang_exec)
+        sandbox = FakeSandbox(
+            f"sbx_{self._n}",
+            hang_exec=self.hang_exec,
+            opaque_timeout=self.opaque_timeout,
+            opaque_delay=self.opaque_delay,
+            opaque_message=self.opaque_message,
+        )
         self.created.append({"sandbox": sandbox, "params": params})
         return sandbox
 

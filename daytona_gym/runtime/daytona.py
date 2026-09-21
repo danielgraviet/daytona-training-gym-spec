@@ -133,8 +133,9 @@ class DaytonaEnvironmentRuntime:
     async def execute(self, env: EnvironmentHandle, action: ToolAction) -> ToolResult:
         sandbox = await self._require_open(env)
         started = time.perf_counter()
+        budget = action.timeout_seconds
         try:
-            raw = await self._dispatch(sandbox, action)
+            raw = await _await_bounded(self._dispatch(sandbox, action), budget)
         except asyncio.CancelledError:
             raise
         except DaytonaError:
@@ -143,9 +144,21 @@ class DaytonaEnvironmentRuntime:
             raise DaytonaError(
                 ErrorCode.TOOL_TIMEOUT,
                 f"tool {action.name} timed out",
-                details={"tool": str(action.name)},
+                details={"tool": str(action.name), "timeout_seconds": budget},
             ) from exc
         except Exception as exc:
+            elapsed = time.perf_counter() - started
+            if _is_tool_timeout(exc, budget=budget, elapsed=elapsed):
+                raise DaytonaError(
+                    ErrorCode.TOOL_TIMEOUT,
+                    f"tool {action.name} timed out",
+                    details={
+                        "tool": str(action.name),
+                        "timeout_seconds": budget,
+                        "elapsed_seconds": elapsed,
+                        "cause": type(exc).__name__,
+                    },
+                ) from exc
             _reraise_sdk(
                 exc,
                 timeout_code=ErrorCode.TOOL_TIMEOUT,
@@ -441,10 +454,62 @@ def _from_exec_response(response: Any) -> ToolResult:
 
 
 def _looks_like_timeout(exc: BaseException) -> bool:
+    """Heuristic: Daytona/HTTP clients often raise non-TimeoutError on stall."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    name = type(exc).__name__.lower()
+    if "timeout" in name or "deadline" in name or "timedout" in name:
+        return True
     text = str(exc).lower()
     if "unexpected keyword argument" in text:
         return False
-    return "timed out" in text or "timeout exceeded" in text or "operation timed out" in text
+    needles = (
+        "timed out",
+        "timeout exceeded",
+        "operation timed out",
+        "deadline exceeded",
+        "timeout waiting",
+        "request timeout",
+        "read timed out",
+        "gateway timeout",
+        "context deadline",
+        "execution timeout",
+        "command timeout",
+        "timeout of",
+        "time out",
+    )
+    return any(needle in text for needle in needles)
+
+
+def _near_timeout_budget(budget: float | None, elapsed: float) -> bool:
+    """True when wall clock is close to the configured tool timeout.
+
+    Edge dogfood: Daytona killed a 5s-budget sleep after ~5.3s but raised a
+    generic error → previously labeled tool_failed. Treat near-budget failures
+    as timeouts when a budget was set.
+    """
+    if budget is None or budget <= 0:
+        return False
+    return elapsed >= float(budget) * 0.9
+
+
+def _is_tool_timeout(
+    exc: BaseException,
+    *,
+    budget: float | None,
+    elapsed: float,
+) -> bool:
+    return _looks_like_timeout(exc) or _near_timeout_budget(budget, elapsed)
+
+
+async def _await_bounded(coro: Any, budget: float | None) -> Any:
+    """Client-side backstop when the SDK ignores / mis-reports timeouts."""
+    if budget is None or budget <= 0:
+        return await coro
+    try:
+        return await asyncio.wait_for(coro, timeout=float(budget))
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(f"timed out after {budget}s") from exc
 
 
 def _looks_missing(exc: BaseException) -> bool:
@@ -477,6 +542,6 @@ def _reraise_sdk(
     fallback: ErrorCode,
     message: str,
 ) -> NoReturn:
-    timeout_like = isinstance(exc, TimeoutError) or _looks_like_timeout(exc)
+    timeout_like = _looks_like_timeout(exc)
     code = timeout_code if timeout_like else fallback
     raise DaytonaError(code, message, details={"cause": type(exc).__name__}) from exc

@@ -79,12 +79,13 @@
 17. **Edge `tool_stall` (2026-09-21 H100, job `raysubmit_KA2V83ueywsGuzuV`):**
     Bootstrap was `python -c "import time; time.sleep(120)"` with
     `DAYTONA_TOOL_TIMEOUT_SECONDS=5`. Expected `tool_timeout` / `aborted`.
-    Actual: `status=failed`, `error_code=tool_failed`, wall ~9.3s, `run_tests×1`,
-    job raised in `_raise_if_unusable`. Telemetry landed (`dg stats` OK).
-    Likely Daytona/SDK killed the exec without a message matching
-    `_looks_like_timeout` (`timed out` / `timeout exceeded`), so
-    `_reraise_sdk` mapped it to `TOOL_FAILED` instead of `TOOL_TIMEOUT`.
-    Customer impact: stall looks like a generic tool crash in dashboards.
+    Actual (before fix): `status=failed`, `error_code=tool_failed`, wall ~9.3s,
+    `run_tests` ~5.32s `! DaytonaError`, finalize OK. Daytona/SDK killed the
+    exec without a message matching our old timeout heuristic.
+    **Fixed:** broader `_looks_like_timeout`, near-budget classification
+    (`elapsed >= 0.9 * tool_timeout` → `TOOL_TIMEOUT`), and `asyncio.wait_for`
+    client backstop around tool dispatch. Re-run `tool_stall` to confirm
+    `errors tool_timeout=1` / `status=aborted`.
 
 
 - Harbor adapter (second after Slime)

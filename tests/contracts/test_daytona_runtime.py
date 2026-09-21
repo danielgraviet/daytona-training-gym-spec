@@ -144,6 +144,81 @@ async def test_tool_timeout_from_sdk() -> None:
     assert runtime.leaked_sandbox_ids == ()
 
 
+async def test_opaque_sdk_error_near_budget_is_tool_timeout() -> None:
+    """H100 tool_stall: SDK burned ~5s then raised a non-timeout message."""
+    runtime = _runtime(
+        FakeAsyncDaytona(
+            opaque_timeout=True,
+            opaque_delay=0.19,
+            opaque_message="command execution failed",
+        )
+    )
+    env = await runtime.create(EnvironmentSpec())
+    try:
+        await runtime.execute(
+            env,
+            ToolAction(
+                name=ToolName.RUN_TESTS,
+                arguments={"command": "python -c 'import time; time.sleep(120)'"},
+                timeout_seconds=0.2,
+            ),
+        )
+        raise AssertionError("expected tool timeout")
+    except DaytonaError as exc:
+        assert exc.code is ErrorCode.TOOL_TIMEOUT
+        assert "timed out" in exc.message
+    await runtime.close(env)
+    assert runtime.leaked_sandbox_ids == ()
+
+
+async def test_deadline_exceeded_message_is_tool_timeout() -> None:
+    runtime = _runtime(
+        FakeAsyncDaytona(
+            opaque_timeout=True,
+            opaque_delay=0.0,
+            opaque_message="Deadline exceeded while waiting for process",
+        )
+    )
+    env = await runtime.create(EnvironmentSpec())
+    try:
+        await runtime.execute(
+            env,
+            ToolAction(
+                name=ToolName.RUN_COMMAND,
+                arguments={"command": "sleep 1"},
+                timeout_seconds=30,
+            ),
+        )
+        raise AssertionError("expected tool timeout")
+    except DaytonaError as exc:
+        assert exc.code is ErrorCode.TOOL_TIMEOUT
+    await runtime.close(env)
+
+
+async def test_fast_opaque_failure_stays_tool_failed() -> None:
+    runtime = _runtime(
+        FakeAsyncDaytona(
+            opaque_timeout=True,
+            opaque_delay=0.0,
+            opaque_message="command execution failed",
+        )
+    )
+    env = await runtime.create(EnvironmentSpec())
+    try:
+        await runtime.execute(
+            env,
+            ToolAction(
+                name=ToolName.RUN_COMMAND,
+                arguments={"command": "false"},
+                timeout_seconds=30,
+            ),
+        )
+        raise AssertionError("expected tool failure")
+    except DaytonaError as exc:
+        assert exc.code is ErrorCode.TOOL_FAILED
+    await runtime.close(env)
+
+
 async def test_blocked_env_vars_are_not_sent_to_sandbox() -> None:
     client = FakeAsyncDaytona()
     runtime = _runtime(

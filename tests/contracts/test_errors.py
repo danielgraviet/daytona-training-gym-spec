@@ -29,6 +29,25 @@ def test_timeout_errors_map_to_aborted() -> None:
     assert DaytonaError(ErrorCode.SANDBOX_PROVISION_FAILED, "t").rollout_status == "failed"
 
 
+def test_looks_like_timeout_covers_sdk_shapes() -> None:
+    from daytona_gym.runtime.daytona import _is_tool_timeout, _looks_like_timeout
+
+    assert _looks_like_timeout(TimeoutError("timed out"))
+    assert _looks_like_timeout(RuntimeError("Deadline exceeded"))
+    assert _looks_like_timeout(RuntimeError("execution timeout after 5s"))
+    assert not _looks_like_timeout(RuntimeError("command execution failed"))
+    assert _is_tool_timeout(
+        RuntimeError("command execution failed"),
+        budget=5.0,
+        elapsed=5.3,
+    )
+    assert not _is_tool_timeout(
+        RuntimeError("command execution failed"),
+        budget=5.0,
+        elapsed=0.2,
+    )
+
+
 def test_redact_env_vars_hides_secrets() -> None:
     redacted = redact_env_vars(
         {
