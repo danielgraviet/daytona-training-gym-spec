@@ -125,17 +125,6 @@ def _print_readable(
     )
 
     print(f"{path.name}  ·  {rollout_id}  ·  {status}  ·  {_fmt_secs(total)}")
-    bits: list[str] = []
-    if outcome.get("reward") is not None:
-        bits.append(f"reward={outcome['reward']}")
-    if outcome.get("sandbox_id"):
-        bits.append(f"sandbox={outcome['sandbox_id']}")
-    if outcome.get("tokens") is not None:
-        bits.append(f"tokens={outcome['tokens']}")
-    elif outcome.get("response_tokens") is not None:
-        bits.append(f"response_tokens={outcome['response_tokens']}")
-    if bits:
-        print("  " + "  ·  ".join(bits))
     if tool_names:
         tools = "  ".join(f"{name}×{count}" for name, count in tool_names.most_common())
         print(f"tools  {tools}")
@@ -163,6 +152,10 @@ def _print_readable(
         bits = "  ".join(f"{k} {_pct(v, total_wall)}" for k, v in parts)
         print()
         print(f"wall   {bits}")
+
+    if outcome.get("reward") is not None:
+        print()
+        print(f"reward {outcome['reward']}")
 
 
 def _outcome_fields(
