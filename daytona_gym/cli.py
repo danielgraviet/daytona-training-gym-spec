@@ -41,3 +41,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def inspect_entry() -> None:
     raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
