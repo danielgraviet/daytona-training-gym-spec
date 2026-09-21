@@ -1,8 +1,25 @@
+"""Duck-typed Daytona SDK for CPU CI only.
+
+First-class proof of Daytona behavior lives in ``tests/e2e`` (real SDK + real
+sandboxes). This fake must mirror shapes observed from live calls — see
+module-level notes and AGENTS.md testing philosophy.
+
+Observed live tool timeout (2026-09-21)::
+
+    type: daytona.common.errors.DaytonaProcessExecutionTimeoutError
+    str:  "Failed to execute command: command execution timeout"
+    cause: ApiException 408 / code PROCESS_EXECUTION_TIMEOUT
+"""
+
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+
+
+class FakeDaytonaProcessExecutionTimeoutError(Exception):
+    """Mirrors ``daytona.common.errors.DaytonaProcessExecutionTimeoutError``."""
 
 
 class FakeExecuteResponse:
@@ -50,11 +67,12 @@ class FakeSandboxProcess:
     ) -> FakeExecuteResponse:
         self.commands.append({"command": command, "cwd": cwd, "env": env, "timeout": timeout})
         if self._sandbox.hang_exec:
-            raise TimeoutError("timed out")
-        if self._sandbox.opaque_timeout:
-            # Mimic Daytona: burn most of the budget then raise a non-TimeoutError.
-            await asyncio.sleep(self._sandbox.opaque_delay)
-            raise RuntimeError(self._sandbox.opaque_message)
+            # Same type-name + message shape as the live SDK timeout path.
+            raise FakeDaytonaProcessExecutionTimeoutError(
+                "Failed to execute command: command execution timeout"
+            )
+        if self._sandbox.fail_exec:
+            raise RuntimeError("Failed to execute command: boom")
         if command.strip() == "false":
             return FakeExecuteResponse(exit_code=1, result="", stderr="false\n")
         if command.strip().startswith("echo "):
@@ -73,23 +91,19 @@ class FakeSandbox:
         sandbox_id: str,
         *,
         hang_exec: bool = False,
-        opaque_timeout: bool = False,
-        opaque_delay: float = 0.08,
-        opaque_message: str = "command execution failed",
+        fail_exec: bool = False,
     ) -> None:
         self.id = sandbox_id
         self.files: dict[str, bytes] = {}
         self.hang_exec = hang_exec
-        self.opaque_timeout = opaque_timeout
-        self.opaque_delay = opaque_delay
-        self.opaque_message = opaque_message
+        self.fail_exec = fail_exec
         self.fs = FakeSandboxFs(self.files)
         self.process = FakeSandboxProcess(self)
         self.deleted = False
 
 
 class FakeAsyncDaytona:
-    """Duck-typed AsyncDaytona used at the SDK boundary in CPU tests."""
+    """Second-class stand-in for ``daytona.AsyncDaytona`` — CI only."""
 
     def __init__(
         self,
@@ -97,16 +111,12 @@ class FakeAsyncDaytona:
         fail_create: bool = False,
         fail_create_timeout: bool = False,
         hang_exec: bool = False,
-        opaque_timeout: bool = False,
-        opaque_delay: float = 0.08,
-        opaque_message: str = "command execution failed",
+        fail_exec: bool = False,
     ) -> None:
         self.fail_create = fail_create
         self.fail_create_timeout = fail_create_timeout
         self.hang_exec = hang_exec
-        self.opaque_timeout = opaque_timeout
-        self.opaque_delay = opaque_delay
-        self.opaque_message = opaque_message
+        self.fail_exec = fail_exec
         self.created: list[Any] = []
         self.deleted: list[str] = []
         self.closed = False
@@ -115,16 +125,14 @@ class FakeAsyncDaytona:
     async def create(self, params: Any = None, *, timeout: float = 60) -> FakeSandbox:
         del timeout
         if self.fail_create_timeout:
-            raise TimeoutError("sandbox create timed out")
+            raise FakeDaytonaProcessExecutionTimeoutError("sandbox create timed out")
         if self.fail_create:
             raise RuntimeError("api rejected sandbox create")
         self._n += 1
         sandbox = FakeSandbox(
             f"sbx_{self._n}",
             hang_exec=self.hang_exec,
-            opaque_timeout=self.opaque_timeout,
-            opaque_delay=self.opaque_delay,
-            opaque_message=self.opaque_message,
+            fail_exec=self.fail_exec,
         )
         self.created.append({"sandbox": sandbox, "params": params})
         return sandbox

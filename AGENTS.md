@@ -63,9 +63,17 @@ Do not make `EnvironmentRuntime` accept a Slime `Sample`.
 
 ## Testing philosophy
 
-Prioritize deterministic CPU-only tests before real GPU integration.
+**Real Daytona SDK + real sandboxes are first-class.** Opt-in live tests under
+`tests/e2e/` (`pytest tests/e2e --e2e` or with `DAYTONA_API_KEY`) prove behavior
+against the platform. Dogfood on BYO GPU is the integration proof for Slime.
 
-Required cases:
+**`FakeAsyncDaytona` is second-class.** It exists only so CPU CI can run without
+network/API keys. It must mirror **observed** SDK shapes (exception types,
+messages, response fields) captured from live e2e / dogfood — never invent
+convenient fake behavior that the real SDK does not exhibit. When live and fake
+disagree, fix the fake (or the production mapper), and add/adjust a live e2e.
+
+Also keep deterministic core/runtime contract tests (no Daytona) for:
 
 - normal successful rollout,
 - tool failure,
@@ -76,7 +84,8 @@ Required cases:
 - cleanup in all cases,
 - concurrency isolation.
 
-Use mocks/fakes at external boundaries.
+`FakeEnvironmentRuntime` (in-process, no SDK) is fine for framework-neutral
+rollout/telemetry tests. Do not use it to “prove” Daytona API semantics.
 
 ## Error handling
 

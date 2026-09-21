@@ -32,10 +32,13 @@ def test_timeout_errors_map_to_aborted() -> None:
 def test_looks_like_timeout_covers_sdk_shapes() -> None:
     from daytona_gym.runtime.daytona import _is_tool_timeout, _looks_like_timeout
 
+    # Observed live (2026-09-21): DaytonaProcessExecutionTimeoutError
+    assert _looks_like_timeout(
+        RuntimeError("Failed to execute command: command execution timeout")
+    )
     assert _looks_like_timeout(TimeoutError("timed out"))
     assert _looks_like_timeout(RuntimeError("Deadline exceeded"))
-    assert _looks_like_timeout(RuntimeError("execution timeout after 5s"))
-    assert not _looks_like_timeout(RuntimeError("command execution failed"))
+    assert not _looks_like_timeout(RuntimeError("Failed to execute command: boom"))
     assert _is_tool_timeout(
         RuntimeError("command execution failed"),
         budget=5.0,

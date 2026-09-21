@@ -1,4 +1,10 @@
-"""Live Daytona: tool timeout must classify as tool_timeout, not tool_failed."""
+"""Live Daytona: tool timeout must classify as tool_timeout, not tool_failed.
+
+First-class proof — real AsyncDaytona + real sandbox. Observed SDK shape::
+
+    DaytonaProcessExecutionTimeoutError
+    "Failed to execute command: command execution timeout"
+"""
 
 from __future__ import annotations
 
