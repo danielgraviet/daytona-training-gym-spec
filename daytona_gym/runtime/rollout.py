@@ -59,6 +59,8 @@ class RolloutRequest:
     sampling_params: dict[str, Any] = field(default_factory=dict)
     timeout_seconds: float | None = None
     max_turns: int = 8
+    # Cap tool executions from a single model turn (models spam 30+ run_tests).
+    max_tools_per_turn: int = 4
     sample_id: str | None = None
     project_id: str | None = None
     stdout_limit: int = DEFAULT_CAPTURE_LIMIT
@@ -127,9 +129,31 @@ class RolloutRunner:
                             f"[environment bootstrap run_tests]\n{bootstrap_event.text}\n"
                         )
                     for _turn in range(request.max_turns):
-                        generation, gen_event = await self._generate(
-                            conversation, request.sampling_params, ids
-                        )
+                        try:
+                            generation, gen_event = await self._generate(
+                                conversation, request.sampling_params, ids
+                            )
+                        except DaytonaError as exc:
+                            # Context overflow from tool-spam: abort this rollout,
+                            # do not poison the Ray job when ALLOW_ABORTED is set.
+                            if (
+                                exc.code is ErrorCode.INFERENCE_FAILED
+                                and _looks_like_context_overflow(exc.message)
+                            ):
+                                status = "aborted"
+                                error_code = str(exc.code)
+                                error_message = exc.message
+                                events.append(
+                                    TrajectoryEvent(
+                                        type="error",
+                                        text=exc.message,
+                                        started_at=_utcnow(),
+                                        finished_at=_utcnow(),
+                                        error_code=str(exc.code),
+                                    )
+                                )
+                                break
+                            raise
                         events.append(gen_event)
                         preview, _ = clip_text(generation.text, 400)
                         model_text = sanitize_generation_text(generation.text)
@@ -179,6 +203,21 @@ class RolloutRunner:
                         tool_actions = [a for a in actions if not a.is_final]
                         final_actions = [a for a in actions if a.is_final]
                         conversation = f"{conversation}{model_text}"
+
+                        limit = max(1, int(request.max_tools_per_turn))
+                        if len(tool_actions) > limit:
+                            dropped = len(tool_actions) - limit
+                            print(
+                                f"[daytona-gym] capping tools this turn "
+                                f"{len(tool_actions)}->{limit} (dropped {dropped})",
+                                flush=True,
+                            )
+                            conversation += (
+                                f"\n[harness] Ignored {dropped} extra tool call(s) this turn "
+                                f"(max {limit}). Prefer read_file / one write_file / run_tests, "
+                                "then wait for tool_result.\n"
+                            )
+                            tool_actions = tool_actions[:limit]
 
                         for action in tool_actions:
                             assert action.tool is not None
@@ -542,3 +581,13 @@ def _reward_from_events(events: list[TrajectoryEvent]) -> float | None:
     if last_tests.ok and (last_tests.exit_code or 0) == 0:
         return 1.0
     return 0.0
+
+
+def _looks_like_context_overflow(message: str) -> bool:
+    text = message.lower()
+    return (
+        "maximum context length" in text
+        or "context length" in text
+        and "exceed" in text
+        or "requested token count exceeds" in text
+    )

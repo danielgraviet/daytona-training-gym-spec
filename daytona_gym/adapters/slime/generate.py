@@ -115,6 +115,9 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         args, "daytona_tool_timeout_seconds", "DAYTONA_TOOL_TIMEOUT_SECONDS"
     )
     max_turns = _resolve_int_arg(args, "daytona_max_turns", "DAYTONA_MAX_TURNS", 8)
+    max_tools = _resolve_int_arg(
+        args, "daytona_max_tools_per_turn", "DAYTONA_MAX_TOOLS_PER_TURN", 4
+    )
 
     spec = EnvironmentSpec(
         image=getattr(args, "daytona_image", None),
@@ -134,6 +137,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         sampling_params=dict(sampling_params or {}),
         timeout_seconds=rollout_timeout,
         max_turns=max_turns,
+        max_tools_per_turn=max_tools,
         sample_id=sample_id,
         project_id=getattr(args, "daytona_project_id", None),
         stdout_limit=int(getattr(args, "daytona_stdout_limit", 16_384)),

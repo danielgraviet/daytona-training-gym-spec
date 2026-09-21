@@ -28,6 +28,45 @@ async def test_parse_user_code_error_nudges_instead_of_failing_job() -> None:
 
     assert result.metadata["daytona"]["status"] == "completed"
     assert runtime.leaked_sandbox_ids == ()
+
+
+async def test_max_tools_per_turn_caps_spam() -> None:
+    from daytona_gym.telemetry.store import InMemoryTelemetryStore
+
+    store = InMemoryTelemetryStore()
+    runtime = FakeEnvironmentRuntime()
+    spam = " ".join(
+        '{"type":"run_tests","arguments":{"command":"python test_broken.py"}}'
+        for _ in range(20)
+    )
+    generator = ScriptedGenerator([spam, final_turn("fixed")])
+    sample = FakeSlimeSample(prompt="p", index=43)
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_store=store,
+        daytona_max_tools_per_turn=3,
+        daytona_require_passing_tests_for_final=False,
+    )
+
+    result = await generate(args, sample, {})
+
+    assert result.metadata["daytona"]["status"] == "completed"
+    tool_spans = [span for span in store.spans if span.name.startswith("tool.")]
+    assert len(tool_spans) == 3
+    assert runtime.leaked_sandbox_ids == ()
+
+
+def test_context_overflow_heuristic() -> None:
+    from daytona_gym.runtime.rollout import _looks_like_context_overflow
+
+    assert _looks_like_context_overflow(
+        "Requested token count exceeds the model's maximum context length of 32768 tokens"
+    )
+    assert not _looks_like_context_overflow("sglang router request failed: connection reset")
+
+
+async def test_rollout_timeout_aborts_and_cleans_up() -> None:
     runtime = FakeEnvironmentRuntime(tool_delay_seconds=0.2)
     generator = ScriptedGenerator(
         [

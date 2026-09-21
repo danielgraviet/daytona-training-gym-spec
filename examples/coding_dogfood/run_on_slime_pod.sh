@@ -175,6 +175,7 @@ for key in (
     "DAYTONA_TOOL_TIMEOUT_SECONDS",
     "DAYTONA_SANDBOX_TIMEOUT_SECONDS",
     "DAYTONA_MAX_TURNS",
+    "DAYTONA_MAX_TOOLS_PER_TURN",
     "DAYTONA_RUN_ID",
 ):
     if os.environ.get(key):

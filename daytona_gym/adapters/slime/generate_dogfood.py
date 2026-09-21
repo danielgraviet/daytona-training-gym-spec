@@ -53,6 +53,11 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         args.daytona_max_turns = max_turns
     elif getattr(args, "daytona_max_turns", None) is None:
         args.daytona_max_turns = 8
+    max_tools = _maybe_int("DAYTONA_MAX_TOOLS_PER_TURN")
+    if max_tools is not None:
+        args.daytona_max_tools_per_turn = max_tools
+    elif getattr(args, "daytona_max_tools_per_turn", None) is None:
+        args.daytona_max_tools_per_turn = 4
     if os.environ.get("DAYTONA_MAX_CONCURRENCY"):
         args.daytona_max_concurrency = int(os.environ["DAYTONA_MAX_CONCURRENCY"])
     elif getattr(args, "daytona_max_concurrency", None) is None:

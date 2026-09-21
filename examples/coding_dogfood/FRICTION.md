@@ -100,10 +100,14 @@
     **Fix** (`27eef52`): agent defaults use `DAYTONA_DEFAULT_RUN_TESTS_CMD` /
     `python test_broken.py`. Re-verify: `completed` / `reward=1.0`,
     `run_tests×2 write_file×2`, wall ~9.6s.
-20. **Edge `hard_prompts` (2026-09-21 H100, job `raysubmit_b8is2G4G95a4wSYQ`):**
-    `n=4` all `failed`, job died on `user_code_error: model output JSON must be an object`.
-    Parse errors hard-failed the Ray job. **Fix** (`1d70ee9`): nudge + continue.
-    Re-run `hard_prompts` — mixed rewards OK; job should not abort on bad JSON.
+20. **Edge `hard_prompts` (2026-09-21 H100):**
+    - First (`b8is2G4G95a4wSYQ`): parse `user_code_error` killed Ray job.
+    - After parse-nudge (`NN17Zctn4uGnbTNd`): job mostly ran — `completed=1`
+      `reward=1.0`, `truncated=6` reward 0, `failed=1` **inference_failed**.
+      Model spam (`run_tests×291 write_file×148`) blew SGLang context
+      (32370+768 > 32768). **Fix:** `max_tools_per_turn` (default 4;
+      hard_prompts=3) + context-overflow → `aborted` (ALLOW_ABORTED keeps
+      other samples alive). Re-run hard_prompts after pull.
 
 ## Missing product pieces (for external partner)
 
