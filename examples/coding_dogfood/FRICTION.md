@@ -55,6 +55,10 @@
 14. **Model emits `{"type":"write_file",...}` instead of `{"type":"tool","name":"write_file",...}`**
     → was a hard `user_code_error` and failed the Ray job. Parser now accepts tool-name-as-type
     and name-only tool objects (`tool_type_alias` / `tool_name_only`).
+15. **Model emitted correct `a + b` write but omitted `path`** (and multi-JSON + echoed `<tool_result>`
+    in one turn) → `path is required` crashed the job. Now: default `path=broken.py` /
+    `command=python test_broken.py` when omitted; scan multiple JSON objects for first usable
+    action; USER_CODE_ERROR on tool exec becomes an observation nudge instead of aborting.
 
 ## Concurrency / cleanup (2 sandboxes)
 

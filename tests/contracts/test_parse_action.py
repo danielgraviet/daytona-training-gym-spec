@@ -93,6 +93,39 @@ def test_parse_type_is_tool_name_alias() -> None:
     assert action.tool.arguments["path"] == "broken.py"
 
 
+def test_parse_write_file_content_only_defaults_path() -> None:
+    action = parse_agent_action(
+        '{"type":"write_file","content":"def add(a, b):\\n    return a + b\\n"}'
+    )
+    assert action.tool is not None
+    assert action.tool.name is ToolName.WRITE_FILE
+    assert action.tool.arguments["path"] == "broken.py"
+    assert "a + b" in action.tool.arguments["content"]
+
+
+def test_parse_run_tests_without_command_defaults() -> None:
+    action = parse_agent_action('{"type":"run_tests"}')
+    assert action.tool is not None
+    assert action.tool.name is ToolName.RUN_TESTS
+    assert action.tool.arguments["command"] == "python test_broken.py"
+
+
+def test_parse_picks_usable_json_among_echoed_tool_result() -> None:
+    text = (
+        '<tool_result name="read_file" ok="true" exit_code="0" truncated="false">\n'
+        "def add(a, b):\n    return a - b\n"
+        "</tool_result> "
+        '{"type":"write_file","content":"def add(a, b):\\n    return a + b\\n"} '
+        '{"type":"run_tests"} '
+        '{"type":"final","content":"fixed"}'
+    )
+    action = parse_agent_action(text)
+    assert action.is_final is False
+    assert action.tool is not None
+    assert action.tool.name is ToolName.WRITE_FILE
+    assert action.tool.arguments["path"] == "broken.py"
+
+
 def test_parse_name_only_tool() -> None:
     action = parse_agent_action(
         '{"name":"run_tests","arguments":{"command":"python test_broken.py"}}'

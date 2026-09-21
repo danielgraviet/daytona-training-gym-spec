@@ -381,7 +381,34 @@ class RolloutRunner:
         try:
             with self._tracer.span(f"tool.{action.name}", **ids) as span:
                 span.set_attribute("tool", tool)
-                result = await self._runtime.execute(env, bounded)
+                try:
+                    result = await self._runtime.execute(env, bounded)
+                except DaytonaError as exc:
+                    # Invalid model args should become an observation, not kill the job.
+                    if exc.code is not ErrorCode.USER_CODE_ERROR:
+                        raise
+                    status = "error"
+                    span.set_attribute("ok", False)
+                    span.set_attribute("error_code", str(exc.code))
+                    finished = _utcnow()
+                    observation = (
+                        f'\n<tool_result name="{action.name}" ok="false" '
+                        f'exit_code="1" truncated="false">\n'
+                        f"[harness] {exc.message}\n"
+                        f"Retry with a complete JSON tool call "
+                        f'(e.g. write_file needs path+content).\n'
+                        f"</tool_result>\n"
+                    )
+                    return TrajectoryEvent(
+                        type="tool",
+                        text=observation,
+                        started_at=started,
+                        finished_at=finished,
+                        tool_name=str(action.name),
+                        exit_code=1,
+                        ok=False,
+                        error_code=str(exc.code),
+                    )
                 span.set_attribute("ok", result.ok)
                 if result.exit_code is not None:
                     span.set_attribute("exit_code", result.exit_code)
