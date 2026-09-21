@@ -27,6 +27,7 @@ MAX_CONCURRENCY="${DAYTONA_MAX_CONCURRENCY:-$((BATCH_SIZE * N_SAMPLES))}"
 NUM_ROLLOUT="${NUM_ROLLOUT:-1}"
 NUM_STEPS_PER_ROLLOUT="${NUM_STEPS_PER_ROLLOUT:-1}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-9999}"
+SAVE_DIR="${SLIME_SAVE_DIR:-/tmp/slime_coding_dogfood_save}"
 MODEL_SCRIPT="${MODEL_SCRIPT:-qwen2.5-0.5B.sh}"
 HF_CHECKPOINT="${HF_CHECKPOINT:-/root/Qwen2.5-0.5B-Instruct/}"
 REF_LOAD="${REF_LOAD:-/root/Qwen2.5-0.5B-Instruct_torch_dist/}"
@@ -67,6 +68,12 @@ echo "  allow_aborted=${DAYTONA_ALLOW_ABORTED:-0}"
 echo "=== Daytona preflight (fail fast before Slime boot) ==="
 python -m daytona_gym.preflight --timeout-seconds 90
 
+# Megatron --save accumulates huge sharded ckpts under /tmp; wipe between dogfoods.
+SAVE_DIR="${SLIME_SAVE_DIR:-/tmp/slime_coding_dogfood_save}"
+echo "=== clearing save dir (was filling the 150G volume): $SAVE_DIR ==="
+rm -rf "$SAVE_DIR"
+mkdir -p "$SAVE_DIR"
+
 # clean leftover ray/sglang
 pkill -9 sglang 2>/dev/null || true
 ray stop --force 2>/dev/null || true
@@ -79,7 +86,7 @@ source "${SLIME_ROOT}/scripts/models/${MODEL_SCRIPT}"
 CKPT_ARGS=(
    --hf-checkpoint "$HF_CHECKPOINT"
    --ref-load "$REF_LOAD"
-   --save /tmp/slime_coding_dogfood_save/
+   --save "$SAVE_DIR"
    --save-interval "$SAVE_INTERVAL"
 )
 
