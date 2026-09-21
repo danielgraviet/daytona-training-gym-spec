@@ -76,16 +76,15 @@
 
 - Job `raysubmit_qMmVkw1ZeGapWCCi` — `tools run_tests=1`; timeline seed → `tool.run_tests` → generate → finalize
 
-17. **Edge `tool_stall` (2026-09-21 H100, job `raysubmit_KA2V83ueywsGuzuV`):**
+17. **Edge `tool_stall` (2026-09-21 H100):**
     Bootstrap was `python -c "import time; time.sleep(120)"` with
-    `DAYTONA_TOOL_TIMEOUT_SECONDS=5`. Expected `tool_timeout` / `aborted`.
-    Actual (before fix): `status=failed`, `error_code=tool_failed`, wall ~9.3s,
-    `run_tests` ~5.32s `! DaytonaError`, finalize OK. Daytona/SDK killed the
-    exec without a message matching our old timeout heuristic.
-    **Fixed:** broader `_looks_like_timeout`, near-budget classification
-    (`elapsed >= 0.9 * tool_timeout` → `TOOL_TIMEOUT`), and `asyncio.wait_for`
-    client backstop around tool dispatch. Re-run `tool_stall` to confirm
-    `errors tool_timeout=1` / `status=aborted`.
+    `DAYTONA_TOOL_TIMEOUT_SECONDS=5`.
+    - Before fix (`raysubmit_KA2V83ueywsGuzuV`): `status=failed`, `tool_failed`,
+      `run_tests` ~5.32s `! DaytonaError` (SDK: `DaytonaProcessExecutionTimeoutError`
+      / "command execution timeout" was mis-mapped).
+    - After fix (`raysubmit_HXPwGU2ApTTQna3b`): `status=aborted`,
+      `errors tool_timeout=1`, wall ~9.1s, job still fails loudly via
+      `_raise_if_unusable`. Finalize/cleanup OK.
 
 
 - Harbor adapter (second after Slime)
