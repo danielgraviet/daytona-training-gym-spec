@@ -10,19 +10,21 @@ Reason:
 
 TRL, Slime, verl, and other frameworks already own optimization and algorithm implementation. Daytona's differentiated infrastructure is environments, rollout execution, and observability.
 
-## 2. Slime first, framework-neutral core
+## 2. Slime first, Harbor second, framework-neutral core
 
 Decision:
 
-Ship Slime as the first adapter.
+Ship **Slime** as the first adapter (MVP). Treat **Harbor** (Terminal-Bench / Daytona sandbox backend) as the immediate second adapter.
 
 Reason:
 
-Its async rollout model fits long-running agentic workloads well and it exposes explicit customization hooks for sandbox/tool-based generation.
+- Slime proved the core loop: BYO GPU + custom generate → Daytona environments → correlated traces.
+- Many teams already run RL/eval through Harbor with Daytona configured as the sandbox backend and their own GPU cluster serving the policy. That is a primary distribution surface for the product.
+- The differentiated value in that path is not replacing Harbor — it is correlating **GPU / inference time** with **Daytona sandbox time** so teams see where wall-clock goes.
 
 Constraint:
 
-No Slime type may leak into Daytona's core rollout runtime API.
+No Slime, Harbor, or Terminal-Bench types may leak into Daytona's core rollout runtime API. Adapters translate at the boundary.
 
 ## 3. Use Slime custom generation before replacing rollout orchestration
 
@@ -147,8 +149,31 @@ Users should stay because Daytona becomes the place they debug and compare RL ru
 
 Decision:
 
-Build the core with adapter interfaces but ship Slime first.
+Build the core with adapter interfaces. Ship an excellent Slime MVP first, then Harbor as the next adapter — before TRL/verl/etc.
 
 Reason:
 
-A half-working Slime + TRL + verl integration is worse than an excellent Slime workflow with clean extension boundaries.
+A half-working Slime + Harbor + TRL + verl integration is worse than a strong Slime path plus a clean second adapter that matches how many buyers already use Daytona.
+
+Order:
+
+```text
+Slime (MVP) → Harbor / Terminal-Bench → other frameworks as demand warrants
+```
+
+## 15. Harbor deepens Daytona, it does not replace Harbor
+
+Decision:
+
+The Harbor adapter should instrument and deepen Harbor's existing Daytona sandbox path — correlation IDs, provision/tool/finalize spans, GPU↔sandbox wall-time — not fork Harbor into a Daytona-owned harness.
+
+Reason:
+
+Buyers keep their Harbor fork, BYO GPUs, and task suites. Daytona becomes the place they debug end-to-end allocation and failures across cluster + sandboxes.
+
+Partner screenshot / wedge:
+
+```text
+One rollout: inference (BYO GPU) vs sandbox.provision / tool.* / finalize
+Same correlation IDs on Harbor/GPU side and Daytona side
+```

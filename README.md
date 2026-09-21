@@ -24,6 +24,10 @@ Primary Slime extension point:
 
 - `--custom-generate-function-path`: implement the per-sample agent loop and Daytona sandbox interaction while keeping Slime's default rollout orchestration.
 
+## Second integration
+
+**Harbor** (Terminal-Bench-style harnesses that already configure Daytona sandboxes) is the immediate second adapter. Typical buyer shape: BYO GPU cluster + Harbor fork + Daytona backends — product value is correlated GPU vs sandbox time allocation. See `PRODUCT_DECISIONS.md` §2 / §15 and `HARBOR_INTEGRATION.md`.
+
 Only use:
 
 - `--rollout-function-path`

@@ -56,6 +56,15 @@ Quick orientation for Daytona Training Gym × Slime GPU dogfood.
 - [ ] Optional: commit parameterized `run_on_slime_pod.sh` knobs for `MODEL_SCRIPT` / `HF_CHECKPOINT` if pod still uses sed
 - [ ] Add short “partner dogfood” blurb pointing at `examples/coding_dogfood/README.md` + preflight
 
+### P1b — Harbor as second adapter (product track)
+
+Decision locked: Slime = MVP adapter; Harbor = immediate second (`PRODUCT_DECISIONS.md` §2 / §15, `HARBOR_INTEGRATION.md`).
+
+- [ ] Spike Harbor’s Daytona sandbox config / extension points (read-only research)
+- [ ] Sketch `daytona_gym/adapters/harbor/` boundary (no Harbor types in core)
+- [ ] Define partner demo: BYO GPU + Harbor + Daytona timeline (GPU vs sandbox wall-time)
+- [ ] CPU contract test with fake Harbor-shaped caller before any GPU Harbor dogfood
+
 ### P2 — Real model tool loop (needs GPU + time)
 
 - [ ] Try Qwen2.5-**4B** (or stronger instruct) for model-emitted `write_file` + second `run_tests` → `reward=1.0`
@@ -80,7 +89,9 @@ Quick orientation for Daytona Training Gym × Slime GPU dogfood.
 | `daytona_gym/adapters/slime/generate.py` | Env-resolved seed + bootstrap for Ray workers |
 | `daytona_gym/adapters/slime/generate_dogfood.py` | Seed + bootstrap defaults |
 | `daytona_gym/runtime/rollout.py` | Seed + bootstrap + agent loop |
+| `HARBOR_INTEGRATION.md` | Second adapter plan (Harbor / Terminal-Bench) |
 | `SLIME_INTEGRATION.md` | Product integration decisions |
+| `PRODUCT_DECISIONS.md` | Slime first → Harbor second; BYO GPU; metrics wedge |
 
 ---
 
@@ -115,4 +126,4 @@ DAYTONA_BOOTSTRAP_RUN_TESTS=0 bash examples/coding_dogfood/run_on_slime_pod.sh
 
 ---
 
-*Next interesting GPU work is P2 (4B tool loop) or tear down the pod and do P1 on CPU.*
+*Next: Harbor spike (P1b) on CPU, or P2 4B tool loop / tear down the pod.*

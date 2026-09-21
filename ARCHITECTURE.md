@@ -212,9 +212,11 @@ The core rollout runtime and telemetry schema must not expose Slime-specific typ
 Use adapters:
 
 ```text
-TRL adapter ----\
-                > Daytona Rollout Runtime -> Daytona Sandboxes
-Slime adapter --/
+Harbor adapter --\
+                 \
+Slime adapter ----> Daytona Rollout Runtime -> Daytona Sandboxes
+                 /
+TRL adapter ----/   (later)
 ```
 
-Slime is the first adapter, not the architecture.
+Slime is the first adapter (MVP). Harbor is the immediate second. Neither is the architecture.

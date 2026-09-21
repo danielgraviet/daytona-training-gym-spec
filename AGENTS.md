@@ -22,6 +22,7 @@ Read in this order:
 - Prefer Slime `--custom-generate-function-path` for the MVP.
 - Keep Daytona core runtime framework-neutral.
 - Slime-specific code belongs under an adapter boundary.
+- Harbor is the planned second adapter; Harbor/Terminal-Bench types also stay out of core.
 - Bring-your-own GPU is a first-class requirement.
 - Do not assume Daytona owns the GPU machine.
 - Reward semantics remain user-configurable.
