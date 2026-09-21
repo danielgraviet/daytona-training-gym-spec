@@ -80,3 +80,24 @@ def test_parse_unknown_tool_raises() -> None:
     with pytest.raises(DaytonaError) as caught:
         parse_agent_action('{"type":"tool","name":"explode","arguments":{}}')
     assert caught.value.code is ErrorCode.USER_CODE_ERROR
+
+
+def test_parse_type_is_tool_name_alias() -> None:
+    action = parse_agent_action(
+        '{"type":"write_file","arguments":{"path":"broken.py","content":"x"}}'
+    )
+    assert action.is_final is False
+    assert action.parse_kind == "tool_type_alias"
+    assert action.tool is not None
+    assert action.tool.name is ToolName.WRITE_FILE
+    assert action.tool.arguments["path"] == "broken.py"
+
+
+def test_parse_name_only_tool() -> None:
+    action = parse_agent_action(
+        '{"name":"run_tests","arguments":{"command":"python test_broken.py"}}'
+    )
+    assert action.is_final is False
+    assert action.parse_kind == "tool_name_only"
+    assert action.tool is not None
+    assert action.tool.name is ToolName.RUN_TESTS

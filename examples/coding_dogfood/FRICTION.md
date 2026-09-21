@@ -52,6 +52,9 @@
       model tends to echo `read_file` contents instead of applying the prompt’s `a + b` example.
     - Mitigation: drop chat template for coding dogfood (plain prompt + concat like Search-R1),
       strip `<|im_end|>` before append, clearer prompt, reject `final` until tests pass.
+14. **Model emits `{"type":"write_file",...}` instead of `{"type":"tool","name":"write_file",...}`**
+    → was a hard `user_code_error` and failed the Ray job. Parser now accepts tool-name-as-type
+    and name-only tool objects (`tool_type_alias` / `tool_name_only`).
 
 ## Concurrency / cleanup (2 sandboxes)
 
