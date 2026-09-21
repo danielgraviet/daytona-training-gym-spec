@@ -16,6 +16,8 @@ export DAYTONA_API_KEY=...
 rm -f runs/dogfood.jsonl
 bash examples/coding_dogfood/run_on_slime_pod.sh
 python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl --rollout rollout_0
+# or short:
+dg
 ```
 
 Expect a log line like `[daytona-gym] generate seed=[...] bootstrap='python test_broken.py'`.

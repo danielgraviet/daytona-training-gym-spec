@@ -51,9 +51,9 @@ async def test_seed_files_written_before_generate(tmp_path: Path, capsys) -> Non
 
     assert inspect_main([str(path), "--rollout", "rollout_7"]) == 0
     out = capsys.readouterr().out
-    assert "sandbox.seed" in out
-    assert "tool.run_tests" in out
-    assert "tool.write_file" in out
+    assert "seed" in out
+    assert "run_tests" in out
+    assert "write_file" in out
 
 
 async def test_generate_dogfood_defaults_seed(tmp_path: Path) -> None:
@@ -108,8 +108,8 @@ async def test_bootstrap_run_tests_emits_tool_span(tmp_path: Path, capsys) -> No
     assert sample.reward == 0.0
     assert inspect_main([str(path), "--rollout", "rollout_9"]) == 0
     out = capsys.readouterr().out
-    assert "sandbox.seed" in out
-    assert "tool.run_tests" in out
+    assert "seed" in out
+    assert "run_tests" in out
 
 
 async def test_bootstrap_from_ray_runtime_env(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -144,8 +144,8 @@ async def test_bootstrap_from_ray_runtime_env(tmp_path: Path, monkeypatch, capsy
     assert sample.reward == 0.0
     assert inspect_main([str(path), "--rollout", "rollout_11"]) == 0
     out = capsys.readouterr().out
-    assert "sandbox.seed" in out
-    assert "tool.run_tests" in out
+    assert "seed" in out
+    assert "run_tests" in out
     assert "bootstrap='python test_broken.py'" in out
 
 

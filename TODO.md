@@ -109,6 +109,8 @@ export DAYTONA_API_KEY=...
 python -m daytona_gym.preflight
 bash examples/coding_dogfood/run_on_slime_pod.sh
 python -m daytona_gym.telemetry.inspect runs/dogfood.jsonl --rollout rollout_0
+# short:
+dg
 
 # Disable bootstrap if needed
 DAYTONA_BOOTSTRAP_RUN_TESTS=0 bash examples/coding_dogfood/run_on_slime_pod.sh

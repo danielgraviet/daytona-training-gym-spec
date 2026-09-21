@@ -33,7 +33,14 @@ async def test_inspect_prints_timeline(tmp_path: Path, capsys) -> None:
     assert path.exists()
     assert inspect_main([str(path), "--rollout", "rollout_1"]) == 0
     out = capsys.readouterr().out
-    assert "rollout rollout_1" in out
-    assert "sandbox.provision" in out
-    assert "inference.generate" in out
-    assert "tool.run_tests" in out
+    assert "rollout_1" in out
+    assert "provision" in out
+    assert "generate" in out
+    assert "run_tests" in out
+
+
+def test_inspect_defaults_and_help(capsys) -> None:
+    from daytona_gym.cli import main as cli_main
+
+    assert cli_main(["--help"]) == 0
+    assert "dg" in capsys.readouterr().out

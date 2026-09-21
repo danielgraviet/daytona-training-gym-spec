@@ -173,5 +173,5 @@ ray job submit --address="http://127.0.0.1:8265" \
    --custom-rm-path daytona_gym.adapters.slime.reward.reward
 
 echo "Inspect traces:"
-echo "  python -m daytona_gym.telemetry.inspect $TELEMETRY_PATH"
-echo "  python -m daytona_gym.telemetry.inspect $TELEMETRY_PATH --rollout rollout_0"
+echo "  dg"
+echo "  dg $TELEMETRY_PATH"
