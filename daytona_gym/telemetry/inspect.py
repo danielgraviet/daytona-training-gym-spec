@@ -102,6 +102,9 @@ def _print_timeline(store: InMemoryTelemetryStore, rollout_id: str) -> None:
             f"  {step.offset_seconds:8.3f}s  {step.name:22}  "
             f"dur={step.duration_seconds:.4f}s{status_bit}{err}"
         )
+        preview = step.attributes.get("generation_preview")
+        if preview:
+            print(f"           preview={preview!r}")
     decomposition = wall_time_decomposition(store.spans_for_rollout(rollout_id))
     parts = " ".join(f"{key}={value:.4f}s" for key, value in decomposition.items() if value > 0)
     if parts:

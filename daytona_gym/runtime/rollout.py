@@ -126,6 +126,14 @@ class RolloutRunner:
                         )
                         events.append(gen_event)
                         action = parse_agent_action(generation.text)
+                        preview, _ = clip_text(generation.text, 400)
+                        print(
+                            "[daytona-gym] model_turn "
+                            f"parse={action.parse_kind} "
+                            f"coerced={action.coerced_from_non_json} "
+                            f"preview={preview!r}",
+                            flush=True,
+                        )
                         if action.is_final:
                             final_response = action.content
                             status = "completed"
@@ -301,6 +309,11 @@ class RolloutRunner:
                     ) from exc
                 if generation.request_id:
                     span.set_attribute("model_request_id", generation.request_id)
+                preview, truncated = clip_text(generation.text, 512)
+                span.set_attribute("generation_preview", preview)
+                span.set_attribute("generation_chars", len(generation.text))
+                if truncated:
+                    span.set_attribute("generation_preview_truncated", True)
         except Exception:
             status = "error"
             raise

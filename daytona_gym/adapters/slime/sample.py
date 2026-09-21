@@ -207,6 +207,9 @@ def serializable_metadata(trajectory: DaytonaTrajectory) -> dict[str, Any]:
 
 
 def _event_summary(event: TrajectoryEvent) -> dict[str, Any]:
+    from daytona_gym.runtime.security import clip_text
+
+    preview, truncated = clip_text(event.text, 400)
     return {
         "type": event.type,
         "tool_name": event.tool_name,
@@ -214,6 +217,8 @@ def _event_summary(event: TrajectoryEvent) -> dict[str, Any]:
         "exit_code": event.exit_code,
         "error_code": event.error_code,
         "text_chars": len(event.text),
+        "text_preview": preview,
+        "text_preview_truncated": truncated,
         "token_count": len(event.token_ids) if event.token_ids is not None else None,
         "started_at": event.started_at.isoformat(),
         "finished_at": event.finished_at.isoformat(),

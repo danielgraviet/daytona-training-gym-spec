@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.types import ToolAction, ToolName
+
+_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -13,6 +16,10 @@ class ParsedAction:
     is_final: bool
     content: str | None = None
     tool: ToolAction | None = None
+    # How the turn was interpreted — useful for harness debugging.
+    parse_kind: str = "final"
+    # True when free text / junk was coerced to final (not explicit {"type":"final"}).
+    coerced_from_non_json: bool = False
 
 
 def parse_agent_action(text: str) -> ParsedAction:
@@ -20,17 +27,27 @@ def parse_agent_action(text: str) -> ParsedAction:
 
     Expected JSON:
       {"type": "final", "content": "..."}
-      {"type": "tool", "name": "run_command", "arguments": {"command": "echo hi"}}
-    Non-JSON text is treated as a final answer so simple completions still work.
+      {"type": "tool", "name": "run_tests", "arguments": {"command": "..."}}
+
+    Resilience (matches what stronger models often emit):
+      - markdown fences around JSON are stripped
+      - first JSON object is taken via raw_decode (trailing junk after a valid
+        object no longer forces a ``final`` — Slime Search-R1 hit the same class
+        of bug without stop strings / postprocess)
+      - true non-JSON prose still becomes final so simple completions work
     """
     stripped = text.strip()
     if not stripped:
         raise DaytonaError(ErrorCode.USER_CODE_ERROR, "empty model output")
 
-    try:
-        payload: Any = json.loads(stripped)
-    except json.JSONDecodeError:
-        return ParsedAction(is_final=True, content=stripped)
+    payload = _extract_json_object(stripped)
+    if payload is None:
+        return ParsedAction(
+            is_final=True,
+            content=stripped,
+            parse_kind="final_fallback",
+            coerced_from_non_json=True,
+        )
 
     if not isinstance(payload, dict):
         raise DaytonaError(ErrorCode.USER_CODE_ERROR, "model output JSON must be an object")
@@ -40,7 +57,7 @@ def parse_agent_action(text: str) -> ParsedAction:
         content = payload.get("content", "")
         if not isinstance(content, str):
             raise DaytonaError(ErrorCode.USER_CODE_ERROR, "final content must be a string")
-        return ParsedAction(is_final=True, content=content)
+        return ParsedAction(is_final=True, content=content, parse_kind="final")
 
     if kind == "tool":
         name = payload.get("name")
@@ -64,6 +81,34 @@ def parse_agent_action(text: str) -> ParsedAction:
                 arguments=arguments,
                 timeout_seconds=float(timeout) if timeout is not None else None,
             ),
+            parse_kind="tool",
         )
 
     raise DaytonaError(ErrorCode.USER_CODE_ERROR, f"unknown action type: {kind!r}")
+
+
+def _extract_json_object(text: str) -> Any | None:
+    candidate = _strip_markdown_fence(text)
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    start = candidate.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(candidate, start)
+    except json.JSONDecodeError:
+        return None
+    return obj
+
+
+def _strip_markdown_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    # Drop opening ``` / ```json and a trailing fence if present.
+    stripped = re.sub(r"^```(?:json)?\s*", "", stripped, count=1, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s*```\s*$", "", stripped, count=1)
+    return stripped.strip()
