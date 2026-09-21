@@ -123,9 +123,39 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
 
     apply_trajectory(sample, trajectory, tokenizer, args=args)
     await _maybe_reward(args, sample, trajectory, tracer, metrics)
+    _record_outcome(tracer, sample, run_id=run_id, rollout_id=rollout_id, sample_id=sample_id)
     _flush_telemetry(args)
     _raise_if_unusable(sample, trajectory)
     return sample
+
+
+def _record_outcome(
+    tracer: Tracer,
+    sample: Any,
+    *,
+    run_id: str,
+    rollout_id: str,
+    sample_id: str | None,
+) -> None:
+    """Persist dogfood-style outcome fields into telemetry for ``dg``."""
+    meta = (getattr(sample, "metadata", None) or {}).get("daytona") or {}
+    tokens = getattr(sample, "tokens", None)
+    token_count = len(tokens) if tokens is not None else None
+    with tracer.span(
+        "rollout.outcome",
+        run_id=run_id,
+        rollout_id=rollout_id,
+        sample_id=sample_id or "",
+        sandbox_id=str(meta.get("sandbox_id") or ""),
+    ) as span:
+        if meta.get("status") is not None:
+            span.set_attribute("status", str(meta["status"]))
+        if meta.get("reward") is not None:
+            span.set_attribute("reward", float(meta["reward"]))
+        if token_count is not None:
+            span.set_attribute("tokens", int(token_count))
+        if meta.get("sandbox_id"):
+            span.set_attribute("sandbox_id", str(meta["sandbox_id"]))
 
 
 def _raise_if_unusable(sample: Any, trajectory: DaytonaTrajectory) -> None:

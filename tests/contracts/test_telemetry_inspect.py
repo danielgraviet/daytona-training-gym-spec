@@ -37,6 +37,9 @@ async def test_inspect_prints_timeline(tmp_path: Path, capsys) -> None:
     assert "provision" in out
     assert "generate" in out
     assert "run_tests" in out
+    assert "reward=" in out
+    assert "sandbox=" in out
+    assert "tokens=" in out
 
 
 def test_inspect_defaults_and_help(capsys) -> None:

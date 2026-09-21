@@ -179,15 +179,11 @@ def _event_token_ids(event: TrajectoryEvent, tokenizer: Tokenizer) -> list[int]:
 
 def infer_reward_from_trajectory(trajectory: DaytonaTrajectory) -> float | None:
     """Prefer last successful run_tests; otherwise leave reward unset."""
-    last_tests: TrajectoryEvent | None = None
-    for event in trajectory.events:
-        if event.type == "tool" and event.tool_name == "run_tests":
-            last_tests = event
-    if last_tests is None:
-        return None
-    if last_tests.ok and (last_tests.exit_code or 0) == 0:
-        return 1.0
-    return 0.0
+    if trajectory.reward is not None:
+        return float(trajectory.reward)
+    from daytona_gym.runtime.rollout import _reward_from_events
+
+    return _reward_from_events(trajectory.events)
 
 
 def serializable_metadata(trajectory: DaytonaTrajectory) -> dict[str, Any]:

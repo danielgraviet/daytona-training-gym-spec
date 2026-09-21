@@ -115,13 +115,8 @@ def _print_readable(
     preview_chars: int,
 ) -> None:
     timeline = reconstruct_rollout(store, rollout_id)
-    status_counts = counter_by_label(store.metrics_named("rollout.count"), "status")
-    status = next(iter(status_counts), "?")
-    for step in timeline:
-        if step.name == "rollout" and step.attributes.get("status"):
-            status = str(step.attributes["status"])
-            break
-
+    outcome = _outcome_fields(store, rollout_id, timeline)
+    status = outcome.get("status") or "?"
     total = timeline[0].duration_seconds if timeline else 0.0
     tool_names = Counter(
         _short_tool(str(span.attributes.get("tool") or span.name))
@@ -130,6 +125,17 @@ def _print_readable(
     )
 
     print(f"{path.name}  ·  {rollout_id}  ·  {status}  ·  {_fmt_secs(total)}")
+    bits: list[str] = []
+    if outcome.get("reward") is not None:
+        bits.append(f"reward={outcome['reward']}")
+    if outcome.get("sandbox_id"):
+        bits.append(f"sandbox={outcome['sandbox_id']}")
+    if outcome.get("tokens") is not None:
+        bits.append(f"tokens={outcome['tokens']}")
+    elif outcome.get("response_tokens") is not None:
+        bits.append(f"response_tokens={outcome['response_tokens']}")
+    if bits:
+        print("  " + "  ·  ".join(bits))
     if tool_names:
         tools = "  ".join(f"{name}×{count}" for name, count in tool_names.most_common())
         print(f"tools  {tools}")
@@ -140,7 +146,7 @@ def _print_readable(
         return
 
     for step in timeline:
-        if step.name == "rollout":
+        if step.name in {"rollout", "rollout.outcome"}:
             continue
         name = _short_span(step.name)
         err = f"  ! {step.error}" if step.error else ""
@@ -157,6 +163,62 @@ def _print_readable(
         bits = "  ".join(f"{k} {_pct(v, total_wall)}" for k, v in parts)
         print()
         print(f"wall   {bits}")
+
+
+def _outcome_fields(
+    store: InMemoryTelemetryStore,
+    rollout_id: str,
+    timeline: list,
+) -> dict[str, object]:
+    """Pull status/reward/sandbox/tokens from outcome or rollout spans; derive reward if needed."""
+    fields: dict[str, object] = {}
+    spans = list(store.spans_for_rollout(rollout_id))
+    for name in ("rollout.outcome", "rollout"):
+        for span in reversed(spans):
+            if span.name != name:
+                continue
+            attrs = span.attributes
+            for key in ("status", "reward", "sandbox_id", "tokens", "response_tokens"):
+                if key in attrs and attrs[key] not in (None, ""):
+                    fields.setdefault(key, attrs[key])
+    if "status" not in fields:
+        for step in timeline:
+            if step.name == "rollout" and step.attributes.get("status"):
+                fields["status"] = step.attributes["status"]
+                break
+        if "status" not in fields:
+            status_counts = counter_by_label(store.metrics_named("rollout.count"), "status")
+            if status_counts:
+                fields["status"] = next(iter(status_counts))
+    if "reward" not in fields:
+        derived = _derive_reward_from_tools(spans)
+        if derived is not None:
+            fields["reward"] = derived
+    if "sandbox_id" not in fields:
+        for span in spans:
+            sid = span.attributes.get("sandbox_id")
+            if sid:
+                fields["sandbox_id"] = sid
+                break
+    return fields
+
+
+def _derive_reward_from_tools(spans: list) -> float | None:
+    last_ok: bool | None = None
+    saw_tests = False
+    for span in spans:
+        if not span.name.startswith("tool."):
+            continue
+        tool = str(span.attributes.get("tool") or span.name.removeprefix("tool."))
+        if tool != "run_tests":
+            continue
+        saw_tests = True
+        ok = span.attributes.get("ok")
+        exit_code = span.attributes.get("exit_code", 0)
+        last_ok = bool(ok) and (exit_code in (0, None))
+    if not saw_tests:
+        return None
+    return 1.0 if last_ok else 0.0
 
 
 def _print_summary_raw(store: InMemoryTelemetryStore, rollout_ids: list[str]) -> None:

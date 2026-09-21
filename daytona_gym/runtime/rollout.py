@@ -250,11 +250,21 @@ class RolloutRunner:
                 rollout_span.set_attribute("status", status)
                 if error_code is not None:
                     rollout_span.set_attribute("error_code", error_code)
+                reward = _reward_from_events(events)
+                response_tokens = sum(
+                    len(event.token_ids or [])
+                    for event in events
+                    if event.type == "generation"
+                )
+                if reward is not None:
+                    rollout_span.set_attribute("reward", float(reward))
+                rollout_span.set_attribute("response_tokens", int(response_tokens))
 
         finished_at = _utcnow()
         self._metrics.increment("rollout.count", status=status)
         duration = (finished_at - started_at).total_seconds()
         self._metrics.observe("rollout.duration_seconds", duration, status=status)
+        reward = _reward_from_events(events)
 
         return DaytonaTrajectory(
             run_id=request.run_id,
@@ -262,7 +272,7 @@ class RolloutRunner:
             prompt=request.prompt,
             events=events,
             final_response=final_response,
-            reward=None,
+            reward=reward,
             status=status,
             started_at=started_at,
             finished_at=finished_at,
@@ -499,3 +509,16 @@ def _tests_currently_passing(events: list[TrajectoryEvent]) -> bool:
     if last_tests is None:
         return False
     return bool(last_tests.ok) and (last_tests.exit_code or 0) == 0
+
+
+def _reward_from_events(events: list[TrajectoryEvent]) -> float | None:
+    """Prefer last run_tests outcome; None if tests never ran."""
+    last_tests: TrajectoryEvent | None = None
+    for event in events:
+        if event.type == "tool" and event.tool_name == "run_tests":
+            last_tests = event
+    if last_tests is None:
+        return None
+    if last_tests.ok and (last_tests.exit_code or 0) == 0:
+        return 1.0
+    return 0.0
