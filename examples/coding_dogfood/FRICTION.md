@@ -85,13 +85,12 @@
     - After fix (`raysubmit_HXPwGU2ApTTQna3b`): `status=aborted`,
       `errors tool_timeout=1`, wall ~9.1s, job still fails loudly via
       `_raise_if_unusable`. Finalize/cleanup OK.
-18. **Edge `rollout_budget` (2026-09-21 H100, job `raysubmit_qJzB8AvaxQxYU35K`):**
-    Default budget was 6s. Actual wall **6.09s** with full success:
-    `status=completed`, `reward=1.0`, `run_tests×2 write_file×1`.
-    3B coding loop on H100 is fast enough that 6s never trips
-    `asyncio.timeout` mid-rollout (finalize sits outside the timeout).
-    Recipe default tightened to **3s** so the next run should show
-    `rollout_timeout` / `aborted`.
+18. **Edge `rollout_budget` (2026-09-21 H100):**
+    - First try (`raysubmit_qJzB8AvaxQxYU35K`, budget 6s): wall **6.09s**,
+      `completed` / `reward=1.0` — happy path too fast to trip timeout.
+    - After tighten to 3s (`raysubmit_fZL59Nyt2CWpvnQJ`): `aborted` /
+      `rollout_timeout`, wall **3.01s**, reward none, job fails loudly.
+      Finalize still runs (timeout wraps the loop; cleanup in `finally`).
 
 ## Missing product pieces (for external partner)
 
