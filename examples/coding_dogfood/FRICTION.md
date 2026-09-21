@@ -93,14 +93,13 @@
       Finalize still runs (timeout wraps the loop; cleanup in `finally`).
 
 19. **Edge `wrong_bootstrap` (2026-09-21 H100):** Bootstrap
-    `python this_file_does_not_exist.py` soft-failed as intended, but the run
-    went **truncated** / `reward=0` with `write_file×89 run_tests×89` over 74s.
+    `python this_file_does_not_exist.py` soft-failed as intended, but the first
+    run went **truncated** / `reward=0` with `write_file×89 run_tests×89` over 74s.
     Root cause: omitted `run_tests.command` defaulted to
-    `DAYTONA_BOOTSTRAP_RUN_TESTS_CMD` (the intentional bad bootstrap command),
-    so every model `run_tests` kept failing → `require_passing_tests` blocked
-    `final` → max-turns truncate. **Fix:** agent defaults use
-    `DAYTONA_DEFAULT_RUN_TESTS_CMD` / `python test_broken.py`, not the bootstrap
-    env. Re-run `wrong_bootstrap` after pull.
+    `DAYTONA_BOOTSTRAP_RUN_TESTS_CMD` (the intentional bad bootstrap command).
+    **Fix** (`27eef52`): agent defaults use `DAYTONA_DEFAULT_RUN_TESTS_CMD` /
+    `python test_broken.py`. Re-verify: `completed` / `reward=1.0`,
+    `run_tests×2 write_file×2`, wall ~9.6s.
 
 
 - Harbor adapter (second after Slime)
