@@ -162,7 +162,13 @@ def _tool_action(
 
 
 def _normalize_tool_arguments(tool_name: ToolName, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Fill coding-dogfood defaults when the model omits required fields."""
+    """Fill coding-dogfood defaults when the model omits required fields.
+
+    Agent tool defaults must NOT reuse ``DAYTONA_BOOTSTRAP_RUN_TESTS_CMD``.
+    That env is for the one-shot post-seed bootstrap only; edge recipes set it
+    to intentional bad commands (missing file / sleep). Falling back to it made
+    every omitted ``run_tests.command`` keep failing (H100 wrong_bootstrap).
+    """
     args = dict(arguments)
     if tool_name is ToolName.WRITE_FILE:
         path = args.get("path")
@@ -173,7 +179,7 @@ def _normalize_tool_arguments(tool_name: ToolName, arguments: dict[str, Any]) ->
         command = args.get("command")
         if not isinstance(command, str) or not command.strip():
             args["command"] = os.environ.get(
-                "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
+                "DAYTONA_DEFAULT_RUN_TESTS_CMD",
                 _DEFAULT_TEST_CMD,
             )
     if tool_name is ToolName.READ_FILE:

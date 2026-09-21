@@ -110,6 +110,18 @@ def test_parse_run_tests_without_command_defaults() -> None:
     assert action.tool.arguments["command"] == "python test_broken.py"
 
 
+def test_run_tests_default_ignores_bootstrap_env(monkeypatch) -> None:
+    """Bootstrap may be an intentional bad command; agent defaults must not inherit it."""
+    monkeypatch.setenv(
+        "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
+        "python this_file_does_not_exist.py",
+    )
+    monkeypatch.delenv("DAYTONA_DEFAULT_RUN_TESTS_CMD", raising=False)
+    action = parse_agent_action('{"type":"run_tests"}')
+    assert action is not None and action.tool is not None
+    assert action.tool.arguments["command"] == "python test_broken.py"
+
+
 def test_parse_picks_usable_json_among_echoed_tool_result() -> None:
     text = (
         '<tool_result name="read_file" ok="true" exit_code="0" truncated="false">\n'
