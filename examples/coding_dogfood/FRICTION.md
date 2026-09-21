@@ -20,6 +20,9 @@
   `tools run_tests=2, read_file=1, write_file=1` —
   bootstrap → `read_file` → `write_file` → `run_tests` → `final`.
   Previews showed valid tool JSON with trailing `<|im_end|>` (old `json.loads` would have killed these turns).
+- **reward=1.0 coding dogfood (job `raysubmit_Ah8AjLWwnxfDK7Qe`):** one generate emitted
+  `write_file(a+b)` + `run_tests` + `final`; multi-tool execution (`cd2356b`) ran both tools →
+  `status=completed`, `tools run_tests=2, write_file=1`.
 
 ## What hurt
 
@@ -75,9 +78,9 @@
 
 ## Missing product pieces (for external partner)
 
-- Reward=1.0 on coding dogfood (context hygiene + no premature final) — in progress
 - Harbor adapter (second after Slime)
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
+- Shorter inspect UX — shipped `dg` CLI (`8557802`); pull + `pip install -e .` on pod
 
 ## Errors / stack traces worth keeping
 

@@ -68,8 +68,8 @@ Decision locked: Slime = MVP adapter; Harbor = immediate second (`PRODUCT_DECISI
 ### P2 — Real model tool loop (needs GPU + time)
 
 - [x] Qwen2.5-**3B** model-emitted tools (after parser fix) — `read_file` / `write_file` / `run_tests`
-- [ ] **reward=1.0** on coding dogfood (context hygiene: no chat-template concat, strip `<|im_end|>`, reject premature final)
-- [ ] Optional: 7B if 3B still fails the fix after context changes
+- [x] **reward=1.0** on coding dogfood (`raysubmit_Ah8AjLWwnxfDK7Qe` — multi-tool one turn)
+- [ ] Optional: 7B / Harbor spike when ready
 
 ### P3 — Learning / narrative
 
