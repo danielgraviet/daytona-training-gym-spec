@@ -100,7 +100,12 @@
     **Fix** (`27eef52`): agent defaults use `DAYTONA_DEFAULT_RUN_TESTS_CMD` /
     `python test_broken.py`. Re-verify: `completed` / `reward=1.0`,
     `run_tests×2 write_file×2`, wall ~9.6s.
+20. **Edge `hard_prompts` (2026-09-21 H100, job `raysubmit_b8is2G4G95a4wSYQ`):**
+    `n=4` all `failed`, job died on `user_code_error: model output JSON must be an object`.
+    Parse errors hard-failed the Ray job. **Fix** (`1d70ee9`): nudge + continue.
+    Re-run `hard_prompts` — mixed rewards OK; job should not abort on bad JSON.
 
+## Missing product pieces (for external partner)
 
 - Harbor adapter (second after Slime)
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
