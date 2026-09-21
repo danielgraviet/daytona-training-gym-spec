@@ -1,14 +1,17 @@
 #!/bin/bash
 # Customer-shaped Slime × Daytona edge-case recipes for an existing GPU pod.
 #
+# Run ONE recipe, inspect, note FRICTION, then the next.
+# Do not chain all recipes in one paste — failures/OOM poison later runs.
+#
 # Usage:
 #   bash examples/coding_dogfood/run_edge_case.sh              # list recipes
 #   bash examples/coding_dogfood/run_edge_case.sh tool_stall
-#   bash examples/coding_dogfood/run_edge_case.sh mem_pressure
+#   dg stats runs/edge_tool_stall.jsonl
 #
 # Expectation: some recipes *should* abort / OOM / rate-limit. Capture with:
-#   dg stats
-#   dg ls
+#   dg stats <path>
+#   dg ls <path>
 # and append notes to FRICTION.md.
 
 set -euo pipefail
@@ -25,19 +28,22 @@ export ROLLOUT_TEMP="${ROLLOUT_TEMP:-0.2}"
 
 _usage() {
   cat <<'EOF'
-Recipes (run one at a time; each writes its own telemetry file):
+Run ONE recipe at a time (inspect + FRICTION note before the next).
+
+Recipes (each writes its own telemetry file):
 
   tool_stall       Bootstrap sleeps 120s; tool timeout 5s → expect tool_timeout abort
   rollout_budget   Tight whole-rollout timeout during normal coding loop
-  concurrency_storm  Many sandboxes at once (rate limits / queueing)
-  mem_pressure     High SGLang mem + longer responses (OOM / thrash risk)
-  hard_prompts     Multi-file seed + prompts that do not spoon-feed the fix
   wrong_bootstrap  Bootstrap command missing → soft fail, model must recover
+  hard_prompts     Multi-file seed + prompts that do not spoon-feed the fix
+  concurrency_storm  Many sandboxes at once (rate limits / queueing)
+  mem_pressure     High SGLang mem + longer responses (OOM / thrash risk) — run last
+
+Order tip: failures first, mem_pressure last.
 
 Examples:
   bash examples/coding_dogfood/run_edge_case.sh tool_stall
-  bash examples/coding_dogfood/run_edge_case.sh concurrency_storm
-  DAYTONA_ALLOW_ABORTED=1 bash examples/coding_dogfood/run_edge_case.sh rollout_budget
+  dg stats runs/edge_tool_stall.jsonl
 EOF
 }
 

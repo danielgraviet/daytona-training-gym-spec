@@ -75,21 +75,23 @@ If Daytona rate-limits or the GPU OOMs, drop to `BATCH_SIZE=2` / `DAYTONA_MAX_CO
 
 ## Customer-shaped edge cases (H100)
 
-Keep the live pod. Run **one recipe at a time** (each writes its own JSONL):
+Keep the live pod. **Run one recipe at a time** — inspect with `dg stats` / `dg ls`,
+append a short note to `FRICTION.md`, then start the next. Do **not** paste the
+full recipe list into one shell session; a failed/OOM run makes later results hard
+to trust.
 
 ```bash
 cd /root/daytona-training-gym-spec && git pull && pip install -e .
 
 bash examples/coding_dogfood/run_edge_case.sh                 # list
-bash examples/coding_dogfood/run_edge_case.sh tool_stall      # expect tool_timeout abort
-bash examples/coding_dogfood/run_edge_case.sh rollout_budget  # expect rollout_timeout
-bash examples/coding_dogfood/run_edge_case.sh concurrency_storm
-bash examples/coding_dogfood/run_edge_case.sh mem_pressure    # OOM / thrash risk
-bash examples/coding_dogfood/run_edge_case.sh hard_prompts    # multifile, no spoon-fed fix
-bash examples/coding_dogfood/run_edge_case.sh wrong_bootstrap
-
+bash examples/coding_dogfood/run_edge_case.sh tool_stall
 dg stats runs/edge_tool_stall.jsonl
-dg ls runs/edge_concurrency.jsonl
+# stop here → FRICTION note → only then the next recipe
+
+bash examples/coding_dogfood/run_edge_case.sh rollout_budget
+# …
 ```
 
-What “good” looks like for failure recipes: traces land, `dg stats` shows `aborted` / `errors tool_timeout=…`, sandboxes still finalize. Append war stories to `FRICTION.md`.
+Suggested order: `tool_stall` → `rollout_budget` → `wrong_bootstrap` → `hard_prompts` → `concurrency_storm` → `mem_pressure` (mem last; OOM can poison the GPU session).
+
+What “good” looks like for failure recipes: traces land, `dg stats` shows `aborted` / `errors …`, sandboxes still finalize.

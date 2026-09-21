@@ -30,20 +30,17 @@ Quick orientation for Daytona Training Gym × Slime GPU dogfood.
 
 ## Next on the live H100 (priority)
 
-Run edge recipes one at a time; capture failures in `FRICTION.md`:
+**One recipe at a time.** Inspect → FRICTION note → then the next. Do not paste the full list.
 
 ```bash
 cd /root/daytona-training-gym-spec && git pull && pip install -e .
 
 bash examples/coding_dogfood/run_edge_case.sh tool_stall
 dg stats runs/edge_tool_stall.jsonl
-
-bash examples/coding_dogfood/run_edge_case.sh rollout_budget
-bash examples/coding_dogfood/run_edge_case.sh concurrency_storm
-bash examples/coding_dogfood/run_edge_case.sh mem_pressure
-bash examples/coding_dogfood/run_edge_case.sh hard_prompts
-bash examples/coding_dogfood/run_edge_case.sh wrong_bootstrap
+# stop → note → continue
 ```
+
+Order: `tool_stall` → `rollout_budget` → `wrong_bootstrap` → `hard_prompts` → `concurrency_storm` → `mem_pressure` (mem last).
 
 Then Harbor spike (P1b) on CPU when edge findings are logged.
 
