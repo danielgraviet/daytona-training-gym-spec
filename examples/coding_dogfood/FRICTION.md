@@ -105,16 +105,37 @@
     - After parse-nudge (`NN17Zctn4uGnbTNd`): job mostly ran — `completed=1`
       `reward=1.0`, `truncated=6` reward 0, `failed=1` **inference_failed**.
       Model spam (`run_tests×291 write_file×148`) blew SGLang context
-      (32370+768 > 32768). **Fix:** `max_tools_per_turn` (default 4;
-      hard_prompts=3) + context-overflow → `aborted` (ALLOW_ABORTED keeps
-      other samples alive). Re-run hard_prompts after pull.
+      (32370+768 > 32768). **Fix** (`b5b69ba`): `max_tools_per_turn`
+      (default 4; hard_prompts=3) + context-overflow → soft `aborted`
+      (`ALLOW_ABORTED` keeps other samples alive).
+    - After cap (`RW4xiCPA84DbYVd8`): rollouts healthy — `completed=1`
+      `truncated=7`, `reward mean=0.125`, tools `run_tests×39 write_file×35`
+      (no `inference_failed`). Job then **Megatron train OOM** on long
+      sequences (GPU ~77 GiB occupied, ~0.6 GiB free) — Slime/train
+      footprint, not Daytona harness. Lean re-run tip:
+      `BATCH_SIZE=1 N_SAMPLES=1 NUM_ROLLOUT=1`.
+21. **Edge `concurrency_storm` (2026-09-21 H100):**
+    `BATCH=8 N_SAMPLES=2 NUM_ROLLOUT=3` concurrency 16 → **48/48**
+    `completed` / `reward=1.0`, wall p50=5.25s p95=8.08s max=11.7s,
+    tools `run_tests×96 write_file×50`. No rate-limit / abort noise.
+    Job succeeded.
+22. **Edge `mem_pressure` (2026-09-21 H100):**
+    `SGLANG_MEM=0.85 MAX_RESP_LEN=2048 BATCH=4 N_SAMPLES=2` → **16/16**
+    `completed` / `reward=1.0`, wall p50=4.42s max=8.24s
+    (`WnY4gCqsHZ9xgMbU` succeeded). No OOM on this H100; recipe still
+    useful as a soak / regression guard.
+
+**Edge suite (H100, 2026-09-21):** tool_stall, rollout_budget,
+wrong_bootstrap, hard_prompts (harness), concurrency_storm, mem_pressure
+all exercised. Remaining follow-up: hard_prompts train-step under leaner
+batch (optional).
 
 ## Missing product pieces (for external partner)
 
 - Harbor adapter (second after Slime)
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
 - Shorter inspect UX — shipped `dg` CLI (`8557802`); pull + `pip install -e .` on pod
-- Edge recipes — `run_edge_case.sh` (tool_stall / rollout_budget / concurrency_storm / mem_pressure / hard_prompts / wrong_bootstrap)
+- Edge recipes — `run_edge_case.sh` suite run on H100 2026-09-21 (see §17–22)
 
 ## Errors / stack traces worth keeping
 
