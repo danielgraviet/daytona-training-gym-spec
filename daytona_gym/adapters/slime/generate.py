@@ -155,7 +155,17 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
 
     apply_trajectory(sample, trajectory, tokenizer, args=args)
     await _maybe_reward(args, sample, trajectory, tracer, metrics)
-    _record_outcome(tracer, sample, run_id=run_id, rollout_id=rollout_id, sample_id=sample_id)
+    _record_outcome(
+        tracer,
+        sample,
+        run_id=run_id,
+        rollout_id=rollout_id,
+        sample_id=sample_id,
+        project_id=getattr(args, "daytona_project_id", None),
+        worker_id=getattr(args, "daytona_worker_id", None),
+        training_step=getattr(args, "daytona_training_step", None),
+        rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
+    )
     _flush_telemetry(args)
     _raise_if_unusable(sample, trajectory)
     return sample
@@ -168,18 +178,26 @@ def _record_outcome(
     run_id: str,
     rollout_id: str,
     sample_id: str | None,
+    project_id: str | None = None,
+    worker_id: str | None = None,
+    training_step: object | None = None,
+    rollout_batch_id: str | None = None,
 ) -> None:
     """Persist dogfood-style outcome fields into telemetry for ``dg``."""
     meta = (getattr(sample, "metadata", None) or {}).get("daytona") or {}
     tokens = getattr(sample, "tokens", None)
     token_count = len(tokens) if tokens is not None else None
-    with tracer.span(
-        "rollout.outcome",
+    ids = correlation_attributes(
         run_id=run_id,
         rollout_id=rollout_id,
-        sample_id=sample_id or "",
+        project_id=project_id,
+        sample_id=sample_id,
         sandbox_id=str(meta.get("sandbox_id") or ""),
-    ) as span:
+        worker_id=worker_id,
+        training_step=training_step,
+        rollout_batch_id=rollout_batch_id,
+    )
+    with tracer.span("rollout.outcome", **ids) as span:
         if meta.get("status") is not None:
             span.set_attribute("status", str(meta["status"]))
         if meta.get("reward") is not None:

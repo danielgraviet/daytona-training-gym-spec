@@ -60,6 +60,7 @@ async def test_rollout_can_be_reconstructed_chronologically() -> None:
         "tool.run_command",
         "inference.generate",
         "sandbox.finalize",
+        "rollout.outcome"
     ]
     assert all(step.offset_seconds >= 0 for step in timeline)
     assert timeline[0].offset_seconds == 0.0
@@ -139,7 +140,10 @@ async def test_reward_span_is_stored_when_reward_function_is_configured() -> Non
     await generate(args, sample, {})
 
     names = [step.name for step in reconstruct_rollout(store, "rollout_2")]
-    assert names[-1] == "reward.compute"
+    assert "reward.compute" in names
+    # Outcome is recorded after reward so dg can read status/reward/tokens.
+    assert names[-1] == "rollout.outcome"
+    assert names.index("reward.compute") < names.index("rollout.outcome")
     assert sample.reward == 0.75
     assert sample.metadata["daytona"]["reward"] == 0.75
     assert store.metrics_named("reward.duration_seconds")
