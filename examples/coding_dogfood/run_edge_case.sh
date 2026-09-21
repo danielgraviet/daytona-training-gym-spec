@@ -33,7 +33,7 @@ Run ONE recipe at a time (inspect + FRICTION note before the next).
 Recipes (each writes its own telemetry file):
 
   tool_stall       Bootstrap sleeps 120s; tool timeout 5s → expect tool_timeout abort
-  rollout_budget   Tight whole-rollout timeout during normal coding loop
+  rollout_budget   Tight whole-rollout timeout (default 3s) during coding loop
   wrong_bootstrap  Bootstrap command missing → soft fail, model must recover
   hard_prompts     Multi-file seed + prompts that do not spoon-feed the fix
   concurrency_storm  Many sandboxes at once (rate limits / queueing)
@@ -68,8 +68,9 @@ case "$RECIPE" in
   rollout_budget)
     export DAYTONA_TELEMETRY_PATH="${DAYTONA_TELEMETRY_PATH:-$REPO/runs/edge_rollout_budget.jsonl}"
     export DAYTONA_RUN_ID="edge_rollout_budget"
-    # Provision+seed+bootstrap alone is often ~3s; 6s forces mid-loop abort on slower paths.
-    export DAYTONA_TIMEOUT_SECONDS="${DAYTONA_TIMEOUT_SECONDS:-6}"
+    # Happy-path coding on 3B/H100 is ~6s end-to-end; 6s never trips. Stay under
+    # provision+seed+bootstrap (~4s) so the whole-rollout budget fires mid-loop.
+    export DAYTONA_TIMEOUT_SECONDS="${DAYTONA_TIMEOUT_SECONDS:-3}"
     export DAYTONA_TOOL_TIMEOUT_SECONDS="${DAYTONA_TOOL_TIMEOUT_SECONDS:-30}"
     export BATCH_SIZE=1 N_SAMPLES=1 NUM_ROLLOUT=1
     export DAYTONA_MAX_CONCURRENCY=1
