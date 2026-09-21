@@ -28,7 +28,8 @@ After submit, `ray job list` should show `DAYTONA_API_KEY_FILE` (path only), **n
 - [x] SGLang ↔ Daytona loop visible in JSONL (`sandbox.provision` / `inference.generate` / `sandbox.finalize`)
 - [x] `sandbox.seed` on coding prompt (`run_on_slime_pod.sh`)
 - [x] Bootstrap `tool.run_tests` (forced after seed; model-emitted tools still optional)
-- [ ] Model-emitted `tool.write_file` / second `run_tests` (needs stronger model or more turns)
+- [x] Model-emitted `tool.write_file` / second `run_tests` on Qwen2.5-3B (parser fix)
+- [ ] Coding dogfood `reward=1.0` (correct `a + b` fix)
 - [x] Sample has tokens, loss_mask, rollout_log_probs (train tensorize succeeded); reward from bootstrap tests
 - [x] At least one optimizer/train step runs
 - [x] Inspector timeline readable without a dashboard

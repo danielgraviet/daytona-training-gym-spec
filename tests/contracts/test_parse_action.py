@@ -65,6 +65,17 @@ def test_parse_true_prose_still_final_fallback() -> None:
     assert action.coerced_from_non_json is True
 
 
+def test_sanitize_strips_im_end() -> None:
+    from daytona_gym.runtime.actions import sanitize_generation_text
+
+    assert (
+        sanitize_generation_text(
+            '{"type":"final","content":"fixed"}<|im_end|>'
+        )
+        == '{"type":"final","content":"fixed"}'
+    )
+
+
 def test_parse_unknown_tool_raises() -> None:
     with pytest.raises(DaytonaError) as caught:
         parse_agent_action('{"type":"tool","name":"explode","arguments":{}}')

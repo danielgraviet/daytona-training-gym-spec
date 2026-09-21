@@ -16,6 +16,10 @@
 - Coding dogfood with `sandbox.seed` + inspect timeline
 - Concurrency=2: both sandboxes provisioned, seeded, finalized (`raysubmit_Nn9JEmvhrNjY88Vt`)
 - Bootstrap `tool.run_tests` after seed (`raysubmit_qMmVkw1ZeGapWCCi`, inspect: seed → `tool.run_tests` → generate → finalize; `tools run_tests=1`)
+- **Qwen2.5-3B-Instruct multi-turn tools (2026-09-21 H100, after parser fix `59bd246`):**
+  `tools run_tests=2, read_file=1, write_file=1` —
+  bootstrap → `read_file` → `write_file` → `run_tests` → `final`.
+  Previews showed valid tool JSON with trailing `<|im_end|>` (old `json.loads` would have killed these turns).
 
 ## What hurt
 
@@ -40,6 +44,14 @@
       failed/aborted trajectories instead of feeding Megatron empty tensors
 12. Slime `scripts/models/qwen2.5-1.5B.sh` shipped `--rotary-base 10000` but HF
     `rope_theta=1000000` → `hf_validate_args` AssertionError until patched
+13. **3B called tools but wrote the wrong fix (`a - b`) then `final`/`fixed` → reward 0:**
+    - Reward path is correct: `infer_reward_from_trajectory` uses **last** `run_tests` ok/exit_code.
+    - Likely context bug: dogfood used `--apply-chat-template` (`add_generation_prompt=True`)
+      then concatenated raw generations (including `<|im_end|>`) + `<tool_result>` without
+      opening a new ChatML user/assistant turn. After the first tool, the prompt is malformed;
+      model tends to echo `read_file` contents instead of applying the prompt’s `a + b` example.
+    - Mitigation: drop chat template for coding dogfood (plain prompt + concat like Search-R1),
+      strip `<|im_end|>` before append, clearer prompt, reject `final` until tests pass.
 
 ## Concurrency / cleanup (2 sandboxes)
 
@@ -51,8 +63,8 @@
 
 ## Missing product pieces (for external partner)
 
-- Tool-loop on a model that emits JSON tools (≥4B) — bootstrap covers forced first `run_tests` today
-- Redact secrets from Ray runtime_env dumps / docs warning — **done:** key file path only in runtime_env
+- Reward=1.0 on coding dogfood (context hygiene + no premature final) — in progress
+- Harbor adapter (second after Slime)
 - Optional: fail-fast hook inside Slime before engine launch (preflight is outside today)
 
 ## Errors / stack traces worth keeping

@@ -19,13 +19,13 @@ CODING_DOGFOOD_PROMPT = f"""\
 You are fixing a tiny Python bug in a sandbox workspace.
 
 Files already present:
-- broken.py — contains def add(a, b) that is WRONG
+- broken.py — def add(a, b) currently returns a - b (WRONG)
 - test_broken.py — asserts add(1, 2) == 3
 
 The environment may already have run: {CODING_RUN_TESTS_COMMAND}
 Read any [environment bootstrap run_tests] output carefully.
 
-You MUST reply with exactly one JSON object per turn (no markdown fences).
+You MUST reply with exactly one JSON object per turn (no markdown fences, no prose).
 
 To run tests:
 {{"type":"tool","name":"run_tests","arguments":{{"command":"{CODING_RUN_TESTS_COMMAND}"}}}}
@@ -33,8 +33,9 @@ To run tests:
 To overwrite a file:
 {{"type":"tool","name":"write_file","arguments":{{"path":"broken.py","content":"def add(a, b):\\n    return a + b\\n"}}}}
 
-When tests pass, finish with:
+When (and only when) tests pass, finish with:
 {{"type":"final","content":"fixed"}}
 
+Do NOT emit final if tests still fail. The correct fix is return a + b (not a - b).
 Prefer write_file to fix broken.py, then run_tests again.
 """

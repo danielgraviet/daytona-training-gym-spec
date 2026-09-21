@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from daytona_gym.runtime.actions import parse_agent_action
+from daytona_gym.runtime.actions import parse_agent_action, sanitize_generation_text
 from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.generation import GenerationBackend, GenerationResult
@@ -67,6 +67,8 @@ class RolloutRequest:
     # If set, run this test command once after seed (before the model speaks).
     # Ensures tool.run_tests appears in traces even when the model skips JSON tools.
     bootstrap_run_tests: str | None = None
+    # If True, ignore {"type":"final"} until the latest run_tests exited 0.
+    require_passing_tests_for_final: bool = False
 
 
 class RolloutRunner:
@@ -134,7 +136,22 @@ class RolloutRunner:
                             f"preview={preview!r}",
                             flush=True,
                         )
+                        model_text = sanitize_generation_text(generation.text)
                         if action.is_final:
+                            if request.require_passing_tests_for_final and not _tests_currently_passing(
+                                events
+                            ):
+                                nudge = (
+                                    "\n[harness] Cannot finalize yet: last run_tests did not pass "
+                                    "(exit 0 / OK). Fix broken.py so add returns a + b, then "
+                                    "call run_tests again.\n"
+                                )
+                                print(
+                                    "[daytona-gym] rejected premature final; nudging model",
+                                    flush=True,
+                                )
+                                conversation = f"{conversation}{model_text}{nudge}"
+                                continue
                             final_response = action.content
                             status = "completed"
                             break
@@ -143,7 +160,15 @@ class RolloutRunner:
                             env, action.tool, request, ids
                         )
                         events.append(tool_event)
-                        conversation = f"{conversation}{generation.text}{tool_event.text}"
+                        conversation = f"{conversation}{model_text}{tool_event.text}"
+                        if (
+                            action.tool.name == ToolName.RUN_TESTS
+                            and tool_event.ok is False
+                        ):
+                            conversation += (
+                                "\n[harness] Tests failed. Update broken.py to "
+                                "`return a + b`, then run_tests again. Do not emit final yet.\n"
+                            )
                     else:
                         status = "truncated"
             except TimeoutError:
@@ -404,3 +429,13 @@ def format_observation(
         parts.append(stderr.rstrip("\n"))
     parts.append("</tool_result>\n")
     return "\n".join(parts)
+
+
+def _tests_currently_passing(events: list[TrajectoryEvent]) -> bool:
+    last_tests: TrajectoryEvent | None = None
+    for event in events:
+        if event.type == "tool" and event.tool_name == "run_tests":
+            last_tests = event
+    if last_tests is None:
+        return False
+    return bool(last_tests.ok) and (last_tests.exit_code or 0) == 0

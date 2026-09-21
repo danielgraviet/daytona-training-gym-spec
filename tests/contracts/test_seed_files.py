@@ -147,3 +147,47 @@ async def test_bootstrap_from_ray_runtime_env(tmp_path: Path, monkeypatch, capsy
     assert "sandbox.seed" in out
     assert "tool.run_tests" in out
     assert "bootstrap='python test_broken.py'" in out
+
+
+async def test_reject_premature_final_then_fix_for_reward_1(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "reward1.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator(
+        [
+            # Model wrongly finalizes while tests still fail (bootstrap already ran).
+            final_turn("fixed"),
+            tool_turn(
+                "write_file",
+                {
+                    "path": "broken.py",
+                    "content": "def add(a, b):\n    return a + b\n",
+                },
+            ),
+            tool_turn("run_tests", {"command": "python test_broken.py"}),
+            final_turn("fixed"),
+        ]
+    )
+    sample = FakeSlimeSample(prompt="fix", index=21)
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_path=str(path),
+        daytona_seed_files=dict(CODING_SEED_FILES),
+        daytona_bootstrap_run_tests="python test_broken.py",
+        daytona_require_passing_tests_for_final=True,
+        daytona_run_id="reward1",
+        daytona_max_turns=8,
+    )
+    try:
+        await generate(args, sample, {})
+        args.daytona_telemetry_store.flush()
+    finally:
+        args.daytona_telemetry_store.close()
+
+    assert sample.reward == 1.0
+    out = capsys.readouterr().out
+    assert "rejected premature final" in out
+    assert inspect_main([str(path), "--rollout", "rollout_21"]) == 0
+    timeline = capsys.readouterr().out
+    assert "tool.write_file" in timeline
+    assert "tools" in timeline or "run_tests" in timeline

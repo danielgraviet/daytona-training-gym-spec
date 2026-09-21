@@ -55,6 +55,13 @@ def _resolve_bootstrap_run_tests(args: Any) -> str | None:
     return None
 
 
+def _resolve_require_passing_tests(args: Any) -> bool:
+    explicit = getattr(args, "daytona_require_passing_tests_for_final", None)
+    if explicit is not None:
+        return bool(explicit)
+    return _env_truthy("DAYTONA_REQUIRE_PASSING_TESTS", default=False)
+
+
 async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     """Slime `--custom-generate-function-path` hook.
 
@@ -70,8 +77,10 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     sample_id = _sample_id(sample)
     seed_files = _resolve_seed_files(args)
     bootstrap = _resolve_bootstrap_run_tests(args)
+    require_passing = _resolve_require_passing_tests(args)
     print(
-        f"[daytona-gym] generate seed={list(seed_files.keys())} bootstrap={bootstrap!r}",
+        f"[daytona-gym] generate seed={list(seed_files.keys())} "
+        f"bootstrap={bootstrap!r} require_passing_tests={require_passing}",
         flush=True,
     )
 
@@ -102,6 +111,7 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
         seed_files=seed_files,
         bootstrap_run_tests=bootstrap,
+        require_passing_tests_for_final=require_passing,
     )
     runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
 

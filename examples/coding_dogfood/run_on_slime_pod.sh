@@ -39,6 +39,7 @@ export DAYTONA_MAX_CONCURRENCY="$MAX_CONCURRENCY"
 export DAYTONA_SEED_CODING="${DAYTONA_SEED_CODING:-1}"
 export DAYTONA_BOOTSTRAP_RUN_TESTS="${DAYTONA_BOOTSTRAP_RUN_TESTS:-1}"
 export DAYTONA_BOOTSTRAP_RUN_TESTS_CMD="${DAYTONA_BOOTSTRAP_RUN_TESTS_CMD:-python test_broken.py}"
+export DAYTONA_REQUIRE_PASSING_TESTS="${DAYTONA_REQUIRE_PASSING_TESTS:-1}"
 mkdir -p "$(dirname "$TELEMETRY_PATH")"
 : "${DAYTONA_API_KEY:?set DAYTONA_API_KEY}"
 
@@ -73,7 +74,7 @@ ROLLOUT_ARGS=(
    --prompt-data "$PROMPT_DATA"
    --input-key prompt
    --label-key label
-   --apply-chat-template
+   # Plain prompt: chat-template + naive concat after <|im_end|> corrupts multi-turn context.
    --num-rollout 1
    --rollout-batch-size "$BATCH_SIZE"
    --n-samples-per-prompt "$N_SAMPLES"
@@ -141,6 +142,9 @@ env_vars = {
     "DAYTONA_BOOTSTRAP_RUN_TESTS": os.environ.get("DAYTONA_BOOTSTRAP_RUN_TESTS", "1"),
     "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD": os.environ.get(
         "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD", "python test_broken.py"
+    ),
+    "DAYTONA_REQUIRE_PASSING_TESTS": os.environ.get(
+        "DAYTONA_REQUIRE_PASSING_TESTS", "1"
     ),
 }
 if "DAYTONA_API_KEY" in env_vars:

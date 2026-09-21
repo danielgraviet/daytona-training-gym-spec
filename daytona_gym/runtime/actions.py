@@ -9,6 +9,10 @@ from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.types import ToolAction, ToolName
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_SPECIAL_TOKEN_RE = re.compile(
+    r"<\|im_end\|>|<\|im_start\|>|<\|endoftext\|>|<\|end\|>",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,12 @@ class ParsedAction:
     parse_kind: str = "final"
     # True when free text / junk was coerced to final (not explicit {"type":"final"}).
     coerced_from_non_json: bool = False
+
+
+def sanitize_generation_text(text: str) -> str:
+    """Strip chat special tokens before appending model text to the conversation."""
+    cleaned = _SPECIAL_TOKEN_RE.sub("", text)
+    return cleaned.strip()
 
 
 def parse_agent_action(text: str) -> ParsedAction:
