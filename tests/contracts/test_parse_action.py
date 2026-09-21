@@ -126,6 +126,32 @@ def test_parse_picks_usable_json_among_echoed_tool_result() -> None:
     assert action.tool.arguments["path"] == "broken.py"
 
 
+def test_parse_agent_actions_returns_write_tests_final_in_order() -> None:
+    from daytona_gym.runtime.actions import parse_agent_actions
+
+    text = (
+        '{"type":"write_file","content":"def add(a, b):\\n    return a + b\\n"} '
+        '{"type":"run_tests"} '
+        '{"type":"final","content":"fixed"}'
+    )
+    actions = parse_agent_actions(text)
+    assert [a.is_final for a in actions] == [False, False, True]
+    assert actions[0].tool is not None and actions[0].tool.name is ToolName.WRITE_FILE
+    assert actions[1].tool is not None and actions[1].tool.name is ToolName.RUN_TESTS
+    assert actions[2].content == "fixed"
+
+
+def test_hallucinated_tool_result_detected() -> None:
+    from daytona_gym.runtime.actions import looks_like_hallucinated_tool_result
+
+    assert looks_like_hallucinated_tool_result(
+        '<tool_result name="run_tests" ok="true" exit_code="0" truncated="false">OK</tool_result>'
+    )
+    assert not looks_like_hallucinated_tool_result(
+        '{"type":"run_tests","arguments":{"command":"python test_broken.py"}}'
+    )
+
+
 def test_parse_name_only_tool() -> None:
     action = parse_agent_action(
         '{"name":"run_tests","arguments":{"command":"python test_broken.py"}}'

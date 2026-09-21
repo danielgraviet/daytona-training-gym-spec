@@ -35,32 +35,36 @@ def sanitize_generation_text(text: str) -> str:
     return cleaned.strip()
 
 
-def parse_agent_action(text: str) -> ParsedAction:
-    """Parse one model turn into a tool call or a final answer.
+def looks_like_hallucinated_tool_result(text: str) -> bool:
+    """True when the model invents a <tool_result> instead of emitting a tool JSON call."""
+    stripped = sanitize_generation_text(text)
+    if "<tool_result" not in stripped:
+        return False
+    # Real tool calls are JSON objects; if we only see tool_result markup, it's fake.
+    return not any(
+        isinstance(obj, dict) and (obj.get("type") in {"tool", "final"} or obj.get("type") in _TOOL_NAME_VALUES or obj.get("name") in _TOOL_NAME_VALUES)
+        for obj in _extract_json_objects(stripped)
+    )
 
-    Expected JSON:
-      {"type": "final", "content": "..."}
-      {"type": "tool", "name": "run_tests", "arguments": {"command": "..."}}
 
-    Also accepted (models often emit these):
-      {"type": "write_file", "arguments": {...}}   # type is the tool name
-      {"type": "write_file", "content": "..."}      # path defaults to broken.py
-      {"name": "run_tests", "arguments": {...}}    # omit type:"tool"
-      multiple JSON objects in one turn — first *usable* action wins
-    """
+def parse_agent_actions(text: str) -> list[ParsedAction]:
+    """Parse all usable actions from one model turn (tools then optional final)."""
     stripped = text.strip()
     if not stripped:
         raise DaytonaError(ErrorCode.USER_CODE_ERROR, "empty model output")
 
     payloads = _extract_json_objects(stripped)
     if not payloads:
-        return ParsedAction(
-            is_final=True,
-            content=stripped,
-            parse_kind="final_fallback",
-            coerced_from_non_json=True,
-        )
+        return [
+            ParsedAction(
+                is_final=True,
+                content=stripped,
+                parse_kind="final_fallback",
+                coerced_from_non_json=True,
+            )
+        ]
 
+    actions: list[ParsedAction] = []
     last_error: DaytonaError | None = None
     for payload in payloads:
         if not isinstance(payload, dict):
@@ -71,11 +75,18 @@ def parse_agent_action(text: str) -> ParsedAction:
             last_error = exc
             continue
         if action is not None:
-            return action
+            actions.append(action)
 
+    if actions:
+        return actions
     if last_error is not None:
         raise last_error
     raise DaytonaError(ErrorCode.USER_CODE_ERROR, "model output JSON must be an object")
+
+
+def parse_agent_action(text: str) -> ParsedAction:
+    """Parse the primary action from one model turn (first usable JSON object)."""
+    return parse_agent_actions(text)[0]
 
 
 def _parse_payload(payload: dict[str, Any]) -> ParsedAction | None:

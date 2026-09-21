@@ -59,6 +59,11 @@
     in one turn) → `path is required` crashed the job. Now: default `path=broken.py` /
     `command=python test_broken.py` when omitted; scan multiple JSON objects for first usable
     action; USER_CODE_ERROR on tool exec becomes an observation nudge instead of aborting.
+16. **Multi-JSON one turn only executed first tool** → write_file applied `a + b`, but sibling
+    `run_tests`/`final` in the same generate were ignored. Model then **hallucinated**
+    `<tool_result ...>OK</tool_result>`, we rejected final (no real passing tests), looped to
+    `truncated`. Fix: execute **all** tool actions from one turn, then honor final; reject
+    hallucinated tool_result markup.
 
 ## Concurrency / cleanup (2 sandboxes)
 

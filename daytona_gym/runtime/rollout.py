@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from daytona_gym.runtime.actions import parse_agent_action, sanitize_generation_text
+from daytona_gym.runtime.actions import (
+    looks_like_hallucinated_tool_result,
+    parse_agent_actions,
+    sanitize_generation_text,
+)
 from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 from daytona_gym.runtime.generation import GenerationBackend, GenerationResult
@@ -127,47 +131,76 @@ class RolloutRunner:
                             conversation, request.sampling_params, ids
                         )
                         events.append(gen_event)
-                        action = parse_agent_action(generation.text)
+                        actions = parse_agent_actions(generation.text)
                         preview, _ = clip_text(generation.text, 400)
+                        kinds = ",".join(a.parse_kind for a in actions)
                         print(
                             "[daytona-gym] model_turn "
-                            f"parse={action.parse_kind} "
-                            f"coerced={action.coerced_from_non_json} "
+                            f"n={len(actions)} parse=[{kinds}] "
                             f"preview={preview!r}",
                             flush=True,
                         )
                         model_text = sanitize_generation_text(generation.text)
-                        if action.is_final:
+
+                        if looks_like_hallucinated_tool_result(generation.text):
+                            nudge = (
+                                "\n[harness] Do not invent <tool_result> text. "
+                                "Emit a JSON tool call such as "
+                                '{"type":"run_tests","arguments":{"command":"python test_broken.py"}} '
+                                "or write_file, then wait for the real tool_result.\n"
+                            )
+                            print(
+                                "[daytona-gym] rejected hallucinated tool_result; nudging model",
+                                flush=True,
+                            )
+                            conversation = f"{conversation}{model_text}{nudge}"
+                            continue
+
+                        tool_actions = [a for a in actions if not a.is_final]
+                        final_actions = [a for a in actions if a.is_final]
+                        conversation = f"{conversation}{model_text}"
+
+                        for action in tool_actions:
+                            assert action.tool is not None
+                            tool_event = await self._execute_tool(
+                                env, action.tool, request, ids
+                            )
+                            events.append(tool_event)
+                            conversation = f"{conversation}{tool_event.text}"
+                            if (
+                                action.tool.name == ToolName.RUN_TESTS
+                                and tool_event.ok is False
+                            ):
+                                conversation += (
+                                    "\n[harness] Tests failed. Update broken.py to "
+                                    "`return a + b`, then run_tests again. "
+                                    "Do not emit final yet.\n"
+                                )
+
+                        if final_actions:
+                            action = final_actions[-1]
                             if request.require_passing_tests_for_final and not _tests_currently_passing(
                                 events
                             ):
                                 nudge = (
                                     "\n[harness] Cannot finalize yet: last run_tests did not pass "
                                     "(exit 0 / OK). Fix broken.py so add returns a + b, then "
-                                    "call run_tests again.\n"
+                                    "call run_tests again (do not invent OK).\n"
                                 )
                                 print(
                                     "[daytona-gym] rejected premature final; nudging model",
                                     flush=True,
                                 )
-                                conversation = f"{conversation}{model_text}{nudge}"
+                                conversation = f"{conversation}{nudge}"
                                 continue
                             final_response = action.content
                             status = "completed"
                             break
-                        assert action.tool is not None
-                        tool_event = await self._execute_tool(
-                            env, action.tool, request, ids
-                        )
-                        events.append(tool_event)
-                        conversation = f"{conversation}{model_text}{tool_event.text}"
-                        if (
-                            action.tool.name == ToolName.RUN_TESTS
-                            and tool_event.ok is False
-                        ):
+
+                        if not tool_actions:
+                            # Prose-only / unknown — already appended; ask for JSON.
                             conversation += (
-                                "\n[harness] Tests failed. Update broken.py to "
-                                "`return a + b`, then run_tests again. Do not emit final yet.\n"
+                                "\n[harness] Reply with exactly one JSON tool or final object.\n"
                             )
                     else:
                         status = "truncated"

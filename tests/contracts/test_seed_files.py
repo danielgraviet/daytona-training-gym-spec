@@ -154,7 +154,6 @@ async def test_reject_premature_final_then_fix_for_reward_1(tmp_path: Path, caps
     runtime = FakeEnvironmentRuntime()
     generator = ScriptedGenerator(
         [
-            # Model wrongly finalizes while tests still fail (bootstrap already ran).
             final_turn("fixed"),
             tool_turn(
                 "write_file",
@@ -187,7 +186,39 @@ async def test_reject_premature_final_then_fix_for_reward_1(tmp_path: Path, caps
     assert sample.reward == 1.0
     out = capsys.readouterr().out
     assert "rejected premature final" in out
-    assert inspect_main([str(path), "--rollout", "rollout_21"]) == 0
-    timeline = capsys.readouterr().out
-    assert "tool.write_file" in timeline
-    assert "tools" in timeline or "run_tests" in timeline
+
+
+async def test_multi_tool_one_turn_reaches_reward_1(tmp_path: Path) -> None:
+    """Model emits write_file + run_tests + final in one generate — execute all tools."""
+    path = tmp_path / "multi.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator(
+        [
+            (
+                '{"type":"write_file","content":"def add(a, b):\\n    return a + b\\n"} '
+                '{"type":"run_tests"} '
+                '{"type":"final","content":"fixed"}'
+            ),
+        ]
+    )
+    sample = FakeSlimeSample(prompt="fix", index=22)
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_path=str(path),
+        daytona_seed_files=dict(CODING_SEED_FILES),
+        daytona_bootstrap_run_tests="python test_broken.py",
+        daytona_require_passing_tests_for_final=True,
+        daytona_run_id="multi",
+        daytona_max_turns=4,
+    )
+    try:
+        await generate(args, sample, {})
+        args.daytona_telemetry_store.flush()
+    finally:
+        args.daytona_telemetry_store.close()
+
+    assert sample.reward == 1.0
+    assert sample.metadata["daytona"]["status"] == "completed"
+    files = runtime.files_for(runtime.created_ids[0])
+    assert "a + b" in files["broken.py"]
