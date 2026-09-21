@@ -131,8 +131,29 @@ class RolloutRunner:
                             conversation, request.sampling_params, ids
                         )
                         events.append(gen_event)
-                        actions = parse_agent_actions(generation.text)
                         preview, _ = clip_text(generation.text, 400)
+                        model_text = sanitize_generation_text(generation.text)
+                        try:
+                            actions = parse_agent_actions(generation.text)
+                        except DaytonaError as exc:
+                            # Bad JSON / unknown shape is an observation, not a job killer.
+                            if exc.code is not ErrorCode.USER_CODE_ERROR:
+                                raise
+                            nudge = (
+                                f"\n[harness] {exc.message}. "
+                                "Reply with a JSON object, e.g. "
+                                '{"type":"tool","name":"read_file","arguments":{"path":"util.py"}} '
+                                'or {"type":"tool","name":"write_file",'
+                                '"arguments":{"path":"util.py","content":"..."}} '
+                                'or {"type":"final","content":"fixed"}.\n'
+                            )
+                            print(
+                                "[daytona-gym] parse user_code_error; nudging model "
+                                f"preview={preview!r}",
+                                flush=True,
+                            )
+                            conversation = f"{conversation}{model_text}{nudge}"
+                            continue
                         kinds = ",".join(a.parse_kind for a in actions)
                         print(
                             "[daytona-gym] model_turn "
@@ -140,7 +161,6 @@ class RolloutRunner:
                             f"preview={preview!r}",
                             flush=True,
                         )
-                        model_text = sanitize_generation_text(generation.text)
 
                         if looks_like_hallucinated_tool_result(generation.text):
                             nudge = (
@@ -172,8 +192,8 @@ class RolloutRunner:
                                 and tool_event.ok is False
                             ):
                                 conversation += (
-                                    "\n[harness] Tests failed. Update broken.py to "
-                                    "`return a + b`, then run_tests again. "
+                                    "\n[harness] Tests failed. Read the failing files, "
+                                    "fix the bug with write_file, then run_tests again. "
                                     "Do not emit final yet.\n"
                                 )
 
@@ -184,8 +204,8 @@ class RolloutRunner:
                             ):
                                 nudge = (
                                     "\n[harness] Cannot finalize yet: last run_tests did not pass "
-                                    "(exit 0 / OK). Fix broken.py so add returns a + b, then "
-                                    "call run_tests again (do not invent OK).\n"
+                                    "(exit 0 / OK). Fix the code, then call run_tests again "
+                                    "(do not invent OK).\n"
                                 )
                                 print(
                                     "[daytona-gym] rejected premature final; nudging model",

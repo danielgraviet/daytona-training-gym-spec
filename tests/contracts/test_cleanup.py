@@ -11,7 +11,23 @@ from daytona_gym.runtime.generation import ScriptedGenerator
 from tests.helpers import FakeSlimeSample, final_turn, make_args, tool_turn
 
 
-async def test_rollout_timeout_aborts_and_cleans_up() -> None:
+async def test_parse_user_code_error_nudges_instead_of_failing_job() -> None:
+    """Hard-prompt models often emit non-object JSON; that must not kill Ray."""
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator(
+        [
+            '["not", "an", "object"]',
+            tool_turn("run_tests", {"command": "pytest"}),
+            final_turn("fixed"),
+        ]
+    )
+    sample = FakeSlimeSample(prompt="p", index=42)
+    args = make_args(runtime=runtime, generator=generator)
+
+    result = await generate(args, sample, {})
+
+    assert result.metadata["daytona"]["status"] == "completed"
+    assert runtime.leaked_sandbox_ids == ()
     runtime = FakeEnvironmentRuntime(tool_delay_seconds=0.2)
     generator = ScriptedGenerator(
         [
