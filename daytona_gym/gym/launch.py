@@ -79,6 +79,7 @@ def plan_to_training_run(plan: LaunchPlan, *, dry_run: bool) -> TrainingRun:
         ray_address=plan.ray_address,
         runtime_env=plan.runtime_env,
         train_argv=display_argv,
+        working_dir=plan.slime_root,
     )
     return TrainingRun(
         run_id=plan.run_id,
@@ -128,6 +129,7 @@ def execute_plan(
         ray_address=plan.ray_address,
         runtime_env=plan.runtime_env,
         train_argv=train_argv,
+        working_dir=plan.slime_root,
     )
 
     _reset_ray(num_gpus=1)

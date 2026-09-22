@@ -53,6 +53,8 @@ def test_build_dry_run_includes_adapters_and_daytona_env(tmp_path: Path) -> None
     joined = " ".join(run.command)
     assert "daytona_gym.adapters.slime.generate_dogfood.generate" in joined
     assert "daytona_gym.adapters.slime.reward.reward" in joined
+    assert "--working-dir=" in joined
+    assert str((tmp_path / "slime").resolve()) in joined
     assert str(tmp_path / "prompts.jsonl") in joined or "prompts.jsonl" in joined
     assert "--rollout-batch-size" in run.command
     assert "2" in run.command

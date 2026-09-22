@@ -253,12 +253,15 @@ def ray_job_submit_command(
     ray_address: str,
     runtime_env: dict[str, Any],
     train_argv: list[str],
+    working_dir: str | Path,
 ) -> list[str]:
+    """Submit Slime ``train.py`` with an explicit working dir (must be Slime root)."""
     return [
         "ray",
         "job",
         "submit",
         f"--address={ray_address}",
+        f"--working-dir={working_dir}",
         f"--runtime-env-json={json.dumps(runtime_env)}",
         "--",
         "python3",
