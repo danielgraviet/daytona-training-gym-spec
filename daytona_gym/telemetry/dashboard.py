@@ -20,7 +20,10 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from daytona_gym.telemetry import dashboard_data as data
-from daytona_gym.telemetry.dashboard_sync import resolve_remote_target, sync_runs_from_ssh
+from daytona_gym.telemetry.dashboard_sync import (
+    resolve_remote_target,
+    sync_runs_from_ssh,
+)
 
 
 def serve(
@@ -110,26 +113,90 @@ def _read_runpod_id(path: str | Path) -> str | None:
 
 
 def _print_access_hints(context: ServeContext, *, host: str, port: int) -> None:
-    if context.kind == "runpod" and context.runpod_pod_id:
-        proxy = f"https://{context.runpod_pod_id}-{port}.proxy.runpod.net"
+    if context.kind in {"runpod", "ssh"}:
         print()
-        print("Open on your laptop:")
-        print(f"  {proxy}")
-        print(f"  (In RunPod UI → Connect: expose HTTP port {port} once if that link 502s.)")
+        print("View from your laptop (no RunPod HTTP port edits):")
+        print("  1) Preferred — on this box, write a single HTML file:")
+        print("       dg dash --export runs/dashboard.html")
+        print("     then download runs/dashboard.html (Jupyter / scp / drag-drop)")
+        print("     and open it locally.")
         print()
-        print("Or SSH tunnel:")
-        print(f"  ssh -L {port}:127.0.0.1:{port} <your-runpod-ssh-target>")
-        print()
-        return
-    if context.kind == "ssh":
-        print()
-        print("Open on your laptop (SSH tunnel):")
-        print(f"  ssh -L {port}:127.0.0.1:{port} <same-user-host-you-used>")
-        print(f"  then open http://127.0.0.1:{port}/")
+        print("  2) Or from your Mac Terminal (needs a real TTY; not Cursor agent):")
+        print("       dg dash --remote <pod-user>@ssh.runpod.io -i ~/.ssh/<key>")
+        print("     Do NOT use root@PUBLIC_IP — that port often dies.")
         print()
         return
     if host not in {"127.0.0.1", "localhost", "::1"}:
         print(f"listening on {host}:{port}")
+
+
+def export_static(runs_dir: Path, out_path: Path) -> Path:
+    """Write one self-contained HTML file (no server needed on the laptop)."""
+    runs_dir = Path(runs_dir)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    runs = data.list_run_files(runs_dir)
+    sections: list[str] = []
+    for run in runs:
+        if run.get("error"):
+            sections.append(
+                f"<section><h2>{_esc(run.get('name'))}</h2>"
+                f"<p class='bad'>{_esc(run['error'])}</p></section>"
+            )
+            continue
+        try:
+            detail = data.run_detail(Path(run["path"]))
+        except Exception as exc:  # noqa: BLE001
+            sections.append(
+                f"<section><h2>{_esc(run.get('name'))}</h2>"
+                f"<p class='bad'>{_esc(exc)}</p></section>"
+            )
+            continue
+        summary = detail.get("summary") or {}
+        mean = summary.get("mean_reward")
+        mean_s = f"{mean:.3f}" if isinstance(mean, float) else "-"
+        rows = []
+        for r in detail.get("rollouts") or []:
+            rid = r["rollout_id"]
+            try:
+                rd = data.rollout_detail(Path(run["path"]), rid)
+            except Exception:  # noqa: BLE001
+                rd = {}
+            step_lines = "".join(
+                f"<li>{_esc(s.get('short') or s.get('name'))} "
+                f"({_esc(_fmt_secs(s.get('duration_seconds')))})</li>"
+                for s in (rd.get("steps") or [])[:40]
+            )
+            rows.append(
+                "<tr>"
+                f"<td>{_esc(rid)}</td>"
+                f"<td>{_esc(r.get('status'))}</td>"
+                f"<td>{_esc(r.get('reward'))}</td>"
+                f"<td>{_esc(_fmt_secs(r.get('wall_seconds')))}</td>"
+                f"<td><ul>{step_lines or '<li class=empty>no steps</li>'}</ul></td>"
+                "</tr>"
+            )
+        sections.append(
+            f"<section id='{_esc(run['stem'])}'>"
+            f"<h2>{_esc(detail['name'])}</h2>"
+            f"<p class='meta'>mean reward <strong>{_esc(mean_s)}</strong> · "
+            f"n <strong>{len(detail.get('rollouts') or [])}</strong></p>"
+            "<table><thead><tr>"
+            "<th>rollout</th><th>status</th><th>reward</th><th>wall</th><th>timeline</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows) or '<tr><td colspan=5 class=empty>none</td></tr>'}</tbody>"
+            "</table></section>"
+        )
+    body = (
+        "<nav class='crumb'>exported dashboard · open this file in a browser</nav>"
+        + (
+            "".join(sections)
+            if sections
+            else "<p class='empty'>No runs/*.jsonl found.</p>"
+        )
+    )
+    out_path.write_text(_layout("Daytona Gym (export)", body), encoding="utf-8")
+    return out_path
 
 
 def _route(path: str, runs_dir: Path) -> tuple[str | bytes, str]:
@@ -459,10 +526,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Do not open a browser tab",
     )
     parser.add_argument(
+        "--export",
+        type=Path,
+        default=None,
+        metavar="FILE.html",
+        help="Write a self-contained HTML report and exit (best on RunPod)",
+    )
+    parser.add_argument(
         "--remote",
         default=None,
         metavar="USER@HOST",
-        help="Pull runs/ from this SSH host first (or set DAYTONA_GYM_SSH)",
+        help="Pull runs/ first (prefer pod-user@ssh.runpod.io from a real Terminal)",
+    )
+    parser.add_argument(
+        "--ssh-port",
+        type=int,
+        default=None,
+        help="SSH port for --remote (optional; or user@host:PORT)",
     )
     parser.add_argument(
         "--remote-root",
@@ -484,6 +564,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.export is not None:
+        path = export_static(args.runs_dir, args.export)
+        print(f"wrote {path.resolve()}")
+        return 0
+
     remote = resolve_remote_target(args.remote)
     if remote:
         print(f"syncing runs/ from {remote} …")
@@ -493,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_runs=args.runs_dir,
                 remote_root=args.remote_root,
                 identity=args.identity,
+                ssh_port=args.ssh_port,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)

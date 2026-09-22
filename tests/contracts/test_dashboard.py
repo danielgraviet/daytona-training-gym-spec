@@ -80,7 +80,6 @@ async def test_dashboard_http_pages(tmp_path: Path) -> None:
     thread.start()
     port = httpd.server_address[1]
     try:
-        # tiny settle for accept loop
         time.sleep(0.05)
         conn = HTTPConnection("127.0.0.1", port, timeout=2)
 
@@ -112,12 +111,21 @@ async def test_dashboard_http_pages(tmp_path: Path) -> None:
         httpd.server_close()
 
 
+async def test_export_static_html(tmp_path: Path) -> None:
+    path = tmp_path / "dogfood.jsonl"
+    await _write_jsonl(path, n=1)
+    out = tmp_path / "dashboard.html"
+    written = dash_mod.export_static(tmp_path, out)
+    text = written.read_text()
+    assert "dogfood.jsonl" in text
+    assert "rollout_0" in text
+
+
 def test_cli_help_mentions_dash(capsys) -> None:
     assert cli_main(["--help"]) == 0
     out = capsys.readouterr().out
     assert "dg dash" in out
-    assert "dg open" in out
-    assert "--remote" in out
+    assert "--export" in out
 
 
 def test_detect_runpod_and_ssh(monkeypatch) -> None:
@@ -140,35 +148,40 @@ def test_runpod_access_hint(capsys, monkeypatch) -> None:
     ctx = dash_mod.detect_serve_context()
     dash_mod._print_access_hints(ctx, host="0.0.0.0", port=8765)
     out = capsys.readouterr().out
-    assert "podxyz-8765.proxy.runpod.net" in out
+    assert "--export" in out
+    assert "ssh.runpod.io" in out
 
 
-def test_sync_runs_from_ssh(tmp_path: Path, monkeypatch) -> None:
-    import os
+def test_parse_remote_port() -> None:
+    from daytona_gym.telemetry.dashboard_sync import parse_remote_target
+
+    assert parse_remote_target("root@1.2.3.4:12713") == ("root@1.2.3.4", 12713)
+    assert parse_remote_target("root@1.2.3.4") == ("root@1.2.3.4", None)
+
+
+def test_sync_runs_via_scp(tmp_path: Path, monkeypatch) -> None:
     import subprocess
 
     from daytona_gym.telemetry.dashboard_sync import sync_runs_from_ssh
 
-    remote_home = tmp_path / "remote_home"
-    repo = remote_home / "daytona-training-gym-spec"
-    (repo / "runs").mkdir(parents=True)
-    (repo / "runs" / "remote.jsonl").write_text('{"ok":true}\n')
-    local_runs = tmp_path / "local" / "runs"
+    local_runs = tmp_path / "runs"
+    remote_payload = tmp_path / "fake_remote_runs"
+    remote_payload.mkdir()
+    (remote_payload / "a.jsonl").write_text('{"ok":1}\n')
 
-    real_popen = subprocess.Popen
+    def fake_run(args, capture_output=False, text=False):  # noqa: ANN001
+        assert args[0] == "scp"
+        dest = Path(args[-1])
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in remote_payload.iterdir():
+            (dest / src.name).write_text(src.read_text())
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
-    def fake_popen(cmd, stdout=None, stderr=None):  # noqa: ANN001
-        assert cmd[0] == "ssh"
-        remote_cmd = cmd[-1]
-        env = {**os.environ, "HOME": str(remote_home)}
-        return real_popen(
-            ["bash", "-lc", remote_cmd],
-            stdout=stdout,
-            stderr=stderr,
-            env=env,
-        )
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    sync_runs_from_ssh(target="fake@host", local_runs=local_runs)
-    assert (local_runs / "remote.jsonl").is_file()
-    assert (local_runs / "remote.jsonl").read_text() == '{"ok":true}\n'
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    sync_runs_from_ssh(
+        target="root@64.247.201.60",
+        local_runs=local_runs,
+        ssh_port=12713,
+        identity=Path("/tmp/fake_key"),
+    )
+    assert (local_runs / "a.jsonl").read_text() == '{"ok":1}\n'
