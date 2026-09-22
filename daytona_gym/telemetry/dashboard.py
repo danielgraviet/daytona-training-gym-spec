@@ -1,9 +1,9 @@
 """Minimal local dashboard over ``runs/*.jsonl``.
 
-  dg dash
+  dg dash                 # local browser; on GPU: live public URL via tunnel
   dg open
-  dg dash --remote user@host          # laptop: pull runs then serve
-  DAYTONA_GYM_SSH=user@host dg dash   # same, via env
+  dg dash --share         # force Cloudflare quick tunnel
+  dg dash --no-share      # loopback only
   python -m daytona_gym.telemetry.dashboard --runs-dir runs --port 8765
 """
 
@@ -24,6 +24,7 @@ from daytona_gym.telemetry.dashboard_sync import (
     resolve_remote_target,
     sync_runs_from_ssh,
 )
+from daytona_gym.telemetry.dashboard_tunnel import QuickTunnel
 
 
 def serve(
@@ -32,10 +33,14 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    share: bool | None = None,
 ) -> None:
     runs_dir = Path(runs_dir).resolve()
     runs_dir.mkdir(parents=True, exist_ok=True)
     context = detect_serve_context()
+    # Remote GPU boxes: share by default so the laptop gets a live URL.
+    if share is None:
+        share = context.kind in {"runpod", "ssh"}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -63,13 +68,38 @@ def serve(
             self.end_headers()
             self.wfile.write(payload)
 
-    httpd = ThreadingHTTPServer((host, port), Handler)
+    bind_host = "127.0.0.1" if share else host
+    httpd = ThreadingHTTPServer((bind_host, port), Handler)
     local_url = f"http://127.0.0.1:{port}/"
     print(f"Daytona Gym dashboard  {local_url}")
     print(f"runs dir: {runs_dir}")
-    _print_access_hints(context, host=host, port=port)
+
+    tunnel: QuickTunnel | None = None
+    if share:
+        print("starting public tunnel (outbound; no RunPod port edits) …")
+        tunnel = QuickTunnel(local_url.rstrip("/"))
+        try:
+            public_url = tunnel.start()
+        except Exception as exc:  # noqa: BLE001
+            print(f"tunnel failed: {exc}", file=sys.stderr)
+            print(
+                "falling back to local-only. Last-resort offline dump: "
+                "dg dash --export runs/dashboard.html",
+                file=sys.stderr,
+            )
+            tunnel = None
+            public_url = None
+        if public_url:
+            print()
+            print("Open on your laptop (live):")
+            print(f"  {public_url}")
+            print("  (public while this process runs — treat traces as sensitive)")
+            print()
+    else:
+        _print_access_hints(context, host=bind_host, port=port)
+
     print("Ctrl+C to stop")
-    should_open = open_browser and context.kind == "local"
+    should_open = open_browser and context.kind == "local" and not share
     if should_open:
         try:
             webbrowser.open(local_url)
@@ -79,6 +109,9 @@ def serve(
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
+    finally:
+        if tunnel is not None:
+            tunnel.stop()
         httpd.server_close()
 
 
@@ -115,15 +148,7 @@ def _read_runpod_id(path: str | Path) -> str | None:
 def _print_access_hints(context: ServeContext, *, host: str, port: int) -> None:
     if context.kind in {"runpod", "ssh"}:
         print()
-        print("View from your laptop (no RunPod HTTP port edits):")
-        print("  1) Preferred — on this box, write a single HTML file:")
-        print("       dg dash --export runs/dashboard.html")
-        print("     then download runs/dashboard.html (Jupyter / scp / drag-drop)")
-        print("     and open it locally.")
-        print()
-        print("  2) Or from your Mac Terminal (needs a real TTY; not Cursor agent):")
-        print("       dg dash --remote <pod-user>@ssh.runpod.io -i ~/.ssh/<key>")
-        print("     Do NOT use root@PUBLIC_IP — that port often dies.")
+        print("Tip: on a GPU box, omit --no-share so dg dash prints a live public URL.")
         print()
         return
     if host not in {"127.0.0.1", "localhost", "::1"}:
@@ -530,13 +555,23 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         metavar="FILE.html",
-        help="Write a self-contained HTML report and exit (best on RunPod)",
+        help="Offline HTML dump (last resort; prefer live --share tunnel)",
+    )
+    parser.add_argument(
+        "--share",
+        action="store_true",
+        help="Publish a public Cloudflare quick-tunnel URL",
+    )
+    parser.add_argument(
+        "--no-share",
+        action="store_true",
+        help="Do not tunnel (loopback only)",
     )
     parser.add_argument(
         "--remote",
         default=None,
         metavar="USER@HOST",
-        help="Pull runs/ first (prefer pod-user@ssh.runpod.io from a real Terminal)",
+        help="Pull runs/ first (optional)",
     )
     parser.add_argument(
         "--ssh-port",
@@ -593,11 +628,20 @@ def main(argv: list[str] | None = None) -> int:
     if host is None:
         host = "0.0.0.0" if context.kind == "runpod" else "127.0.0.1"
 
+    share: bool | None
+    if args.no_share:
+        share = False
+    elif args.share:
+        share = True
+    else:
+        share = None  # auto: on for runpod/ssh
+
     serve(
         runs_dir=args.runs_dir,
         host=host,
         port=args.port,
         open_browser=not args.no_open,
+        share=share,
     )
     return 0
 

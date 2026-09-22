@@ -125,7 +125,7 @@ def test_cli_help_mentions_dash(capsys) -> None:
     assert cli_main(["--help"]) == 0
     out = capsys.readouterr().out
     assert "dg dash" in out
-    assert "--export" in out
+    assert "--share" in out
 
 
 def test_detect_runpod_and_ssh(monkeypatch) -> None:
@@ -148,8 +148,14 @@ def test_runpod_access_hint(capsys, monkeypatch) -> None:
     ctx = dash_mod.detect_serve_context()
     dash_mod._print_access_hints(ctx, host="0.0.0.0", port=8765)
     out = capsys.readouterr().out
-    assert "--export" in out
-    assert "ssh.runpod.io" in out
+    assert "live public URL" in out
+
+
+def test_parse_tunnel_url() -> None:
+    from daytona_gym.telemetry.dashboard_tunnel import parse_public_url
+
+    text = "INF | https://random-words-1234.trycloudflare.com"
+    assert parse_public_url(text) == "https://random-words-1234.trycloudflare.com"
 
 
 def test_parse_remote_port() -> None:

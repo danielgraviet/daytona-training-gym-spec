@@ -79,11 +79,10 @@ Example (aspirational):
 - Slime × Daytona coding dogfood is **proven** on BYO H100 (`examples/coding_dogfood/`, edge suite in `FRICTION.md`).
 - **Gym SDK skeleton is shipped:** `TrainConfig(...).launch(dry_run=True|False)` builds (and on a Slime GPU host, runs) the same wiring as the dogfood shell script. See `examples/gym_sdk/quickstart.py`.
 - Local dashboard: `dg dash` / `dg open` over `runs/*.jsonl`.
-  - **On RunPod (recommended):** `dg dash --export runs/dashboard.html` then download
-    that one file (Jupyter / web terminal) and open it on your Mac. No HTTP ports,
-    no SSH tunnels, no public IP.
-  - **Mac pull (optional):** `dg dash --remote <pod>@ssh.runpod.io -i key` from
-    Terminal.app (RunPod needs a real TTY). Do not rely on `root@PUBLIC_IP`.
+  - **On RunPod / SSH GPU:** `dg dash` starts an outbound Cloudflare quick tunnel and
+    prints a live `https://….trycloudflare.com` URL — open that on your Mac. No Edit
+    Pod HTTP ports, no file download loop.
+  - On a laptop with local traces: `dg dash` opens the browser on localhost.
 - Remote BYO worker registration (SSH / agent) is **not shipped** — `launch()` runs on the GPU box itself.
 
 ## Core architecture
