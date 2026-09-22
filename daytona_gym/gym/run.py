@@ -21,3 +21,8 @@ class TrainingRun:
     def __post_init__(self) -> None:
         if not self.inspect_hint:
             self.inspect_hint = f"dg stats {self.telemetry_path}"
+
+    @property
+    def training_run_id(self) -> str:
+        """Modal-compatible alias for ``run_id``."""
+        return self.run_id

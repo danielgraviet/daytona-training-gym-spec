@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 def build_plan(config: TrainConfig, *, run_id: str | None = None) -> LaunchPlan:
     config.validate(require_existing_paths=False)
     rid = run_id or config.run_name or new_run_id()
-    compute = config.compute
+    compute = config.resolved_compute()
     recipe = config.recipe
     dataset = config.dataset
     repo = compute.resolved_repo()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 
 
 @dataclass(frozen=True)
@@ -36,3 +36,24 @@ class CodingRecipe:
 
     def global_batch_size(self) -> int:
         return int(self.batch_size) * int(self.n_samples)
+
+
+def _recipe(**overrides: object) -> CodingRecipe:
+    base = CodingRecipe()
+    if not overrides:
+        return base
+    allowed = {f.name for f in fields(CodingRecipe)}
+    unknown = set(overrides) - allowed
+    if unknown:
+        raise TypeError(f"unknown CodingRecipe fields: {sorted(unknown)}")
+    return replace(base, **overrides)  # type: ignore[arg-type]
+
+
+def Qwen25_3B_Recipe(**overrides: object) -> CodingRecipe:
+    """Coding GRPO recipe paired with ``Qwen25_3B()`` (Modal-shaped name)."""
+    return _recipe(**overrides)
+
+
+def Qwen25_05B_Recipe(**overrides: object) -> CodingRecipe:
+    """Coding GRPO recipe paired with ``Qwen25_05B()``."""
+    return _recipe(**overrides)

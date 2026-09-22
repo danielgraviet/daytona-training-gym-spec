@@ -41,21 +41,20 @@ Reward logic should remain user-configurable, typically through Slime's `--custo
 ## MVP user experience (goal)
 
 ```python
-from daytona_gym import TrainConfig, CodingRecipe, LocalSlimeCompute, PromptJsonlDataset
+from daytona_gym import (
+    PromptJsonlDataset,
+    Qwen25_3B,
+    Qwen25_3B_Recipe,
+    TrainConfig,
+)
 
 config = TrainConfig(
-    compute=LocalSlimeCompute(
-        slime_root="/root/slime",
-        megatron_root="/root/Megatron-LM",
-        hf_checkpoint="/root/Qwen2.5-3B-Instruct/",
-        ref_load="/root/Qwen2.5-3B-Instruct_torch_dist/",
-        model_script="qwen2.5-3B.sh",
-    ),
+    model=Qwen25_3B(),
     dataset=PromptJsonlDataset("examples/coding_dogfood/prompts/coding_one.jsonl"),
-    recipe=CodingRecipe(batch_size=1, n_samples=1, num_rollout=1),
+    recipe=Qwen25_3B_Recipe(),
 )
 run = config.launch(dry_run=True)  # or launch() on a Slime GPU host
-print(run.run_id, run.inspect_hint)
+print(run.training_run_id, run.inspect_hint)
 ```
 
 Expected result:
