@@ -15,7 +15,7 @@ Quick orientation for Daytona Training Gym.
 | Slime train + Daytona custom generate/RM | Pass (0.5B → 3B) |
 | Sandbox provision → seed → bootstrap → finalize | Pass |
 | Stress / edge suite | Pass (`FRICTION.md` §17–22) |
-| `dg ls` / `dg stats` | Pass |
+| `dg ls` / `dg stats` / `dg dash` | Pass (local HTML over JSONL) |
 
 ### Gym SDK skeleton (done)
 
@@ -36,7 +36,7 @@ python examples/gym_sdk/quickstart.py
 ## Next
 
 1. **Dogfood `launch()` on H100 or 3090** — replace bash entry with quickstart `--launch`; note FRICTION.
-2. Then pick: live dashboard v0 vs Harbor-as-backend under recipes.
+2. Then pick: Harbor-as-backend under recipes, or polish dashboard (live refresh / hosted URL).
 
 Parked: `dg harbor` CLI wrapper; remote SSH worker agent; PyPI until API stabilizes.
 
@@ -47,7 +47,8 @@ Parked: `dg harbor` CLI wrapper; remote SSH worker agent; PyPI until API stabili
 ### P1
 
 - [ ] Real `TrainConfig.launch()` on BYO GPU (parity with `run_on_slime_pod.sh`)
-- [ ] Live dashboard v0 (reward / step timing / rollout trace)
+- [x] Local dashboard v0 (`dg dash` / `dg open` — reward / wall / rollout timeline)
+- [ ] Hosted / shared dashboard URL (optional)
 - [ ] Remote BYO worker registration
 
 ### P1b — Harbor backend (when chosen)

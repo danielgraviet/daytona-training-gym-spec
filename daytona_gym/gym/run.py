@@ -20,7 +20,7 @@ class TrainingRun:
 
     def __post_init__(self) -> None:
         if not self.inspect_hint:
-            self.inspect_hint = f"dg stats {self.telemetry_path}"
+            self.inspect_hint = f"dg stats {self.telemetry_path}  |  dg dash"
 
     @property
     def training_run_id(self) -> str:

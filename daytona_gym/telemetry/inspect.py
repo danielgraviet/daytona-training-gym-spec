@@ -5,6 +5,7 @@ Short forms (after ``pip install -e .``):
   dg
   dg ls
   dg stats
+  dg dash
   dg -r rollout_0
   python -m daytona_gym
 """

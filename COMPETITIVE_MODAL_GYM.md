@@ -91,9 +91,9 @@ On BYO H100 + cloud Daytona sandboxes (`examples/coding_dogfood/`):
 | Custom RM / coding seed / bootstrap | Proven |
 | Concurrent sandboxes (e.g. 48/48 reward=1 concurrency storm) | Proven |
 | Typed failures, timeouts, tool caps, context soft-abort | Proven |
-| Local telemetry JSONL + `dg` / `dg ls` / `dg stats` | Proven |
+| Local telemetry JSONL + `dg` / `dg ls` / `dg stats` / `dg dash` | Proven |
 | `TrainConfig.launch()` facade | **Skeleton shipped** (`daytona_gym.gym`; see `examples/gym_sdk/`) |
-| Live run dashboard (Modal-parity) | **Not shipped** |
+| Live run dashboard (Modal-parity) | Local `dg dash` over JSONL; hosted URL **not** shipped |
 | BYO worker registration / one-button remote launch | **Not shipped** (manual pod scripts today) |
 | Harbor as gym backend | **Not shipped** (spec only) |
 
@@ -107,7 +107,7 @@ Bottom line: the **hard env loop** works. The **Modal-shaped product facade** do
 | Modal GPUs | BYO GPU host | Need clear worker/launch story (scripts → worker → SDK) |
 | Modal Sandbox | Daytona `EnvironmentRuntime` | Done for Slime path |
 | Recipe presets | Dogfood scripts + env knobs | Need named recipes (model + batch + sandbox profile) |
-| `training-gym setup/open` dashboard | JSONL + `dg` today; dashboard later | Biggest UX gap vs Modal screenshots |
+| `training-gym setup/open` dashboard | `dg dash` / `dg open` over `runs/*.jsonl` | Hosted/shared URL still missing |
 | `TrainingRun` handle | `run_id` in telemetry | Need stable public run object + inspect URL |
 | Agent skills | None | Optional later |
 | Harbor under gym | `HARBOR_INTEGRATION.md` | Backend/adapter under recipes — **not** partner CLI |
@@ -130,7 +130,7 @@ From our product stance (unchanged):
 ## Next build fork
 
 1. **Dogfood Gym SDK `launch()` on BYO GPU** — prove `examples/gym_sdk/quickstart.py --launch` matches shell dogfood.
-2. **Harbor-as-backend** or **dashboard v0** — under the same gym facade (still no Harbor-CLI-first UX).
+2. **Harbor-as-backend** under the same gym facade (still no Harbor-CLI-first UX), or polish local dashboard → hosted URL.
 
 ## Related repo docs
 

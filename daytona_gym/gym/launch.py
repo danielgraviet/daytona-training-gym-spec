@@ -89,7 +89,7 @@ def plan_to_training_run(plan: LaunchPlan, *, dry_run: bool) -> TrainingRun:
         runtime_env=dict(plan.runtime_env),
         dry_run=dry_run,
         model_script=plan.model_script,
-        inspect_hint=f"dg stats {plan.telemetry_path}",
+        inspect_hint=f"dg stats {plan.telemetry_path}  |  dg dash",
     )
 
 
@@ -152,7 +152,7 @@ def execute_plan(
         dry_run=False,
         returncode=proc.returncode,
         model_script=plan.model_script,
-        inspect_hint=f"dg stats {plan.telemetry_path}",
+        inspect_hint=f"dg stats {plan.telemetry_path}  |  dg dash",
     )
 
 

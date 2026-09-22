@@ -78,7 +78,9 @@ Example (aspirational):
 
 - Slime × Daytona coding dogfood is **proven** on BYO H100 (`examples/coding_dogfood/`, edge suite in `FRICTION.md`).
 - **Gym SDK skeleton is shipped:** `TrainConfig(...).launch(dry_run=True|False)` builds (and on a Slime GPU host, runs) the same wiring as the dogfood shell script. See `examples/gym_sdk/quickstart.py`.
-- Live dashboard is **not shipped yet** — inspect with `dg` over JSONL telemetry.
+- Local dashboard: `dg dash` (or `dg open`) serves HTML over `runs/*.jsonl`.
+  - On RunPod/SSH it prints a proxy URL or tunnel one-liner for your laptop.
+  - On a laptop: `dg dash --remote user@gpu-host` (or `DAYTONA_GYM_SSH=…`) pulls `runs/` via SSH+tar, then serves.
 - Remote BYO worker registration (SSH / agent) is **not shipped** — `launch()` runs on the GPU box itself.
 
 ## Core architecture
