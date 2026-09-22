@@ -2,10 +2,10 @@
 
 ## Goal
 
-Build a portable reinforcement-learning post-training runtime where users can:
+Build a portable reinforcement-learning post-training **gym** where users can:
 
 1. bring their own GPUs,
-2. use an existing RL framework (Slime first),
+2. use an existing RL framework (Slime first; Harbor later as a backend),
 3. run agentic rollouts inside Daytona sandboxes,
 4. automatically collect rollout + training + inference telemetry,
 5. inspect one unified dashboard for bottlenecks and failures.
@@ -15,6 +15,8 @@ Daytona should **not** become a new RL training framework.
 The product boundary is:
 
 > Existing RL framework owns optimization. Existing inference engine owns token generation. Daytona owns stateful rollout environments, rollout execution infrastructure, and cross-layer observability.
+
+**North star UX** matches [Modal Training Gym](https://gym.modal.dev/) (`TrainConfig.launch()` + recipes + run handle + dashboard), with the explicit diffs **BYO GPUs** and **Daytona sandboxes**. See [`COMPETITIVE_MODAL_GYM.md`](COMPETITIVE_MODAL_GYM.md).
 
 ## First integration
 
@@ -26,7 +28,7 @@ Primary Slime extension point:
 
 ## Second integration
 
-**Harbor** (Terminal-Bench-style harnesses that already configure Daytona sandboxes) is the immediate second adapter. Typical buyer shape: BYO GPU cluster + Harbor fork + Daytona backends — product value is correlated GPU vs sandbox time allocation. See `PRODUCT_DECISIONS.md` §2 / §15 and `HARBOR_INTEGRATION.md`.
+**Harbor** is the next **framework/backend under the gym facade** (Terminal-Bench / agent-eval), not the primary CLI. Typical buyer shape: BYO GPU + Harbor tasks + Daytona sandboxes — product value is correlated GPU vs sandbox time. See `PRODUCT_DECISIONS.md` §2 / §15 / §16 and `HARBOR_INTEGRATION.md`.
 
 Only use:
 
@@ -36,33 +38,49 @@ if Daytona later needs to replace Slime's outer rollout orchestration entirely.
 
 Reward logic should remain user-configurable, typically through Slime's `--custom-rm-path` or environment-owned reward helpers.
 
-## MVP user experience
+## MVP user experience (goal)
 
-```bash
-pip install daytona-gym
+```python
+from daytona_gym import TrainConfig, CodingRecipe, LocalSlimeCompute, PromptJsonlDataset
 
-daytona gym init
-# edit daytona-gym.yaml
-
-daytona gym run daytona-gym.yaml
+config = TrainConfig(
+    compute=LocalSlimeCompute(
+        slime_root="/root/slime",
+        megatron_root="/root/Megatron-LM",
+        hf_checkpoint="/root/Qwen2.5-3B-Instruct/",
+        ref_load="/root/Qwen2.5-3B-Instruct_torch_dist/",
+        model_script="qwen2.5-3B.sh",
+    ),
+    dataset=PromptJsonlDataset("examples/coding_dogfood/prompts/coding_one.jsonl"),
+    recipe=CodingRecipe(batch_size=1, n_samples=1, num_rollout=1),
+)
+run = config.launch(dry_run=True)  # or launch() on a Slime GPU host
+print(run.run_id, run.inspect_hint)
 ```
 
 Expected result:
 
-- Slime starts on user-provided GPU workers.
+- Training starts on **user-provided** GPU workers (not Daytona-owned compute).
 - Daytona provisions coding sandboxes for rollouts.
 - Each rollout gets a stable `run_id` and `rollout_id`.
-- Telemetry starts streaming automatically.
-- CLI prints a dashboard URL immediately.
+- Telemetry streams automatically; partners open a run view (dashboard later; `dg` today).
 
-Example:
+Example (aspirational):
 
 ```text
-✓ connected gpu-worker-01: 8x H100
+✓ connected gpu-worker-01: 1x H100 (BYO)
 ✓ slime control process started
-✓ rollout runtime connected
-✓ dashboard: https://app.daytona.io/gym/runs/run_01J...
+✓ daytona sandboxes ready
+✓ run: run_01J...
+✓ inspect: dg stats  |  dashboard: https://app.daytona.io/gym/runs/run_01J...
 ```
+
+### Current state (honest)
+
+- Slime × Daytona coding dogfood is **proven** on BYO H100 (`examples/coding_dogfood/`, edge suite in `FRICTION.md`).
+- **Gym SDK skeleton is shipped:** `TrainConfig(...).launch(dry_run=True|False)` builds (and on a Slime GPU host, runs) the same wiring as the dogfood shell script. See `examples/gym_sdk/quickstart.py`.
+- Live dashboard is **not shipped yet** — inspect with `dg` over JSONL telemetry.
+- Remote BYO worker registration (SSH / agent) is **not shipped** — `launch()` runs on the GPU box itself.
 
 ## Core architecture
 
@@ -118,9 +136,11 @@ The sticky layer is **workflow + telemetry + debugging**, not compute lock-in.
 
 ## Repo documents
 
+- `COMPETITIVE_MODAL_GYM.md` — Modal Training Gym vs us (BYO + Daytona sandboxes).
 - `ARCHITECTURE.md` — components, ownership, data flow, identifiers.
 - `MVP_SCOPE.md` — explicit v1 scope and non-goals.
 - `SLIME_INTEGRATION.md` — how Daytona plugs into Slime.
+- `HARBOR_INTEGRATION.md` — Harbor as gym backend (planned).
 - `OBSERVABILITY.md` — metrics, traces, dashboard design.
 - `CONFIG_AND_CLI.md` — proposed config and command surface.
 - `PRODUCT_DECISIONS.md` — important choices and rationale.

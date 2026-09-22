@@ -10,21 +10,26 @@ Reason:
 
 TRL, Slime, verl, and other frameworks already own optimization and algorithm implementation. Daytona's differentiated infrastructure is environments, rollout execution, and observability.
 
-## 2. Slime first, Harbor second, framework-neutral core
+## 2. Slime first, Harbor second — under a Modal-shaped gym API
 
 Decision:
 
-Ship **Slime** as the first adapter (MVP). Treat **Harbor** (Terminal-Bench / Daytona sandbox backend) as the immediate second adapter.
+Ship **Slime** as the first training backend (MVP). Treat **Harbor** as the next **framework/backend under the gym facade** (Terminal-Bench / agent-eval distribution), not as the primary CLI partners memorize.
 
 Reason:
 
 - Slime proved the core loop: BYO GPU + custom generate → Daytona environments → correlated traces.
-- Many teams already run RL/eval through Harbor with Daytona configured as the sandbox backend and their own GPU cluster serving the policy. That is a primary distribution surface for the product.
-- The differentiated value in that path is not replacing Harbor — it is correlating **GPU / inference time** with **Daytona sandbox time** so teams see where wall-clock goes.
+- Buyers asked for a Modal Training Gym–like experience (`TrainConfig.launch()` + recipes + run handle + dashboard). See §16 and `COMPETITIVE_MODAL_GYM.md`.
+- Many teams still run eval/RL through Harbor with Daytona sandboxes; that remains a distribution surface — as a gym backend, not `harbor run -e long.module:Class` as the happy path.
+- Differentiated value on the Harbor path: correlate **GPU / inference time** with **Daytona sandbox time**.
 
 Constraint:
 
 No Slime, Harbor, or Terminal-Bench types may leak into Daytona's core rollout runtime API. Adapters translate at the boundary.
+
+Parked approach:
+
+Do **not** make a thin `dg harbor` / long Harbor flag-injection CLI the product surface. Adapter plumbing may exist later; partners should launch through the gym SDK.
 
 ## 3. Use Slime custom generation before replacing rollout orchestration
 
@@ -149,27 +154,29 @@ Users should stay because Daytona becomes the place they debug and compare RL ru
 
 Decision:
 
-Build the core with adapter interfaces. Ship an excellent Slime MVP first, then Harbor as the next adapter — before TRL/verl/etc.
+Build the core with adapter interfaces. Ship an excellent Slime MVP first, then Harbor as the next gym backend — before TRL/verl/etc.
 
 Reason:
 
-A half-working Slime + Harbor + TRL + verl integration is worse than a strong Slime path plus a clean second adapter that matches how many buyers already use Daytona.
+A half-working Slime + Harbor + TRL + verl integration is worse than a strong Slime path plus a clean second backend that matches how many buyers already use Daytona.
 
 Order:
 
 ```text
-Slime (MVP) → Harbor / Terminal-Bench → other frameworks as demand warrants
+Gym facade (TrainConfig-shaped) over Slime (MVP)
+  → Harbor as second backend under the same facade
+  → other frameworks as demand warrants
 ```
 
 ## 15. Harbor deepens Daytona, it does not replace Harbor
 
 Decision:
 
-The Harbor adapter should instrument and deepen Harbor's existing Daytona sandbox path — correlation IDs, provision/tool/finalize spans, GPU↔sandbox wall-time — not fork Harbor into a Daytona-owned harness.
+When integrated, the Harbor adapter should instrument and deepen Harbor's existing Daytona sandbox path — correlation IDs, provision/tool/finalize spans, GPU↔sandbox wall-time — not fork Harbor into a Daytona-owned harness. Prefer exposing Harbor through gym recipes / Python config, not requiring partners to type Harbor import paths.
 
 Reason:
 
-Buyers keep their Harbor fork, BYO GPUs, and task suites. Daytona becomes the place they debug end-to-end allocation and failures across cluster + sandboxes.
+Buyers keep their Harbor workflows, BYO GPUs, and task suites. Daytona becomes the place they debug end-to-end allocation and failures across cluster + sandboxes.
 
 Partner screenshot / wedge:
 
@@ -177,3 +184,24 @@ Partner screenshot / wedge:
 One rollout: inference (BYO GPU) vs sandbox.provision / tool.* / finalize
 Same correlation IDs on Harbor/GPU side and Daytona side
 ```
+
+## 16. Modal-shaped gym UX; BYO GPU + Daytona sandboxes
+
+Decision:
+
+Match the **partner experience** of [Modal Training Gym](https://gym.modal.dev/) — Python `TrainConfig` / recipes / `launch()` → run id + observability — while differing on infrastructure:
+
+| Layer | Modal | Daytona Gym |
+|-------|--------|-------------|
+| UX | `TrainConfig.launch()` | Same shape (goal) |
+| GPUs | Modal-owned | **BYO** |
+| Sandboxes | Modal Sandbox | **Daytona** |
+| Trainer | Under recipes (Slime, …) | Same — we do not own the trainer |
+
+Reason:
+
+That is what users have requested. Modal’s value is hiding Ray/cluster/checkpoint plumbing and showing live reward + step timing + per-rollout traces. Our wedge is the same workflow with **portable GPUs** and **Daytona environments**, plus correlated sandbox telemetry. Full competitive map: `COMPETITIVE_MODAL_GYM.md`.
+
+Implication:
+
+Next build choice is **Gym SDK skeleton** (facade over proven Slime×Daytona dogfood) vs **Harbor-as-backend** under that facade — not Harbor-CLI-first.

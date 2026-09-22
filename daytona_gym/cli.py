@@ -27,7 +27,10 @@ def main(argv: list[str] | None = None) -> int:
             "  dg -r rollout_0    inspect one rollout\n"
             "  dg inspect [path]  same as dg [path]\n"
             "  dg i [path]        alias for inspect\n"
-            "  dg --raw           legacy dense format\n"
+            "  dg --raw           legacy dense format\n\n"
+            "Gym SDK (Python):\n"
+            "  from daytona_gym import TrainConfig, CodingRecipe, ...\n"
+            "  run = TrainConfig(...).launch(dry_run=True)\n"
         )
         return 0
     if args and args[0] in {"inspect", "i"}:

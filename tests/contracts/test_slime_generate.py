@@ -107,16 +107,19 @@ async def test_chat_prompt_is_flattened() -> None:
     assert sample.metadata["daytona"]["status"] == "completed"
 
 
-async def test_malformed_tool_name_is_user_code_error() -> None:
+async def test_malformed_tool_name_nudges_instead_of_failing_job() -> None:
+    """Unknown tool names must not kill the Ray job; nudge and continue."""
     runtime = FakeEnvironmentRuntime()
-    generator = ScriptedGenerator([json.dumps({"type": "tool", "name": "explode", "arguments": {}})])
+    generator = ScriptedGenerator(
+        [
+            json.dumps({"type": "tool", "name": "explode", "arguments": {}}),
+            final_turn("done"),
+        ]
+    )
     sample = FakeSlimeSample(prompt="p", index=1)
     args = make_args(runtime=runtime, generator=generator)
 
-    with pytest.raises(DaytonaError) as caught:
-        await generate(args, sample, {})
+    result = await generate(args, sample, {})
 
-    assert caught.value.code == ErrorCode.USER_CODE_ERROR
-    assert sample.status is FakeSlimeSample.Status.FAILED
-    assert sample.metadata["daytona"]["error_code"] == ErrorCode.USER_CODE_ERROR
+    assert result.metadata["daytona"]["status"] == "completed"
     assert runtime.leaked_sandbox_ids == ()

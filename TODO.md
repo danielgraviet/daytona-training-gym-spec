@@ -1,67 +1,65 @@
 # TODO — pick up here (next session)
 
-Quick orientation for Daytona Training Gym × Slime GPU dogfood.
+Quick orientation for Daytona Training Gym.
 
 ## Status snapshot
 
-**Repo:** `main` (edge-case recipes + `dg ls` / `dg stats`)  
-**GPU:** Keep the live RunPod H100 if still up — use it for edge recipes below  
+**Repo:** `main`  
 **Local path:** `~/Desktop/projects/daytona-training-gym-spec`  
-**Pod path:** `/root/daytona-training-gym-spec`, Slime `/root/slime`, Megatron `/root/Megatron-LM`
+**North star:** Modal-shaped gym UX + BYO GPU + Daytona sandboxes — see `COMPETITIVE_MODAL_GYM.md` and `PRODUCT_DECISIONS.md` §16.
 
-### Proven on GPU
+### Proven on GPU (H100 dogfood)
 
 | Check | Result |
 |---|---|
 | Slime train + Daytona custom generate/RM | Pass (0.5B → 3B) |
 | Sandbox provision → seed → bootstrap → finalize | Pass |
-| Stress 40 rollouts (`4×2×5`) all `reward=1.0` | Pass |
-| Model-emitted tools + coding `reward=1.0` (3B) | Pass (`Ah8AjLWwnxfDK7Qe`) |
+| Stress / edge suite | Pass (`FRICTION.md` §17–22) |
 | `dg ls` / `dg stats` | Pass |
-| Customer edge recipes (stall / OOM / multifile) | **In progress — run on H100** |
 
-### Important pod state
+### Gym SDK skeleton (done)
 
-- Models: `Qwen2.5-3B-Instruct` (+ `_torch_dist`); older 0.5B/1.5B may still be on disk
-- API key via `DAYTONA_API_KEY_FILE` only in Ray `runtime_env`
-- **Rotate keys** that ever leaked in chat / old `ray job list`
+- [x] `TrainConfig` / `CodingRecipe` / `LocalSlimeCompute` / `PromptJsonlDataset` / `TrainingRun`
+- [x] `launch(dry_run=True)` builds Ray/Slime argv + runtime_env (no API key in Ray env)
+- [x] `launch()` on GPU host: preflight → ray job submit (attached)
+- [x] `examples/gym_sdk/quickstart.py` + CPU tests
+
+```bash
+python examples/gym_sdk/quickstart.py
+# on Slime GPU host:
+# DAYTONA_API_KEY=... python examples/gym_sdk/quickstart.py --launch
+# dg stats runs/<run_id>.jsonl
+```
 
 ---
 
-## Next on the live H100 (priority)
+## Next
 
-**One recipe at a time.** Inspect → FRICTION note → then the next. Do not paste the full list.
+1. **Dogfood `launch()` on H100 or 3090** — replace bash entry with quickstart `--launch`; note FRICTION.
+2. Then pick: live dashboard v0 vs Harbor-as-backend under recipes.
 
-```bash
-cd /root/daytona-training-gym-spec && git pull && pip install -e .
-
-bash examples/coding_dogfood/run_edge_case.sh tool_stall
-dg stats runs/edge_tool_stall.jsonl
-# stop → note → continue
-```
-
-Order: `tool_stall` → `rollout_budget` → `wrong_bootstrap` → `hard_prompts` → `concurrency_storm` → `mem_pressure` (mem last).
-
-Then Harbor spike (P1b) on CPU when edge findings are logged.
+Parked: `dg harbor` CLI wrapper; remote SSH worker agent; PyPI until API stabilizes.
 
 ---
 
 ## Backlog
 
-### P1 — DX
+### P1
 
-- [ ] Partner dogfood blurb → `examples/coding_dogfood/README.md` + preflight
-- [ ] Optional: parameterize remaining pod sed hacks away from MODEL_SCRIPT env
+- [ ] Real `TrainConfig.launch()` on BYO GPU (parity with `run_on_slime_pod.sh`)
+- [ ] Live dashboard v0 (reward / step timing / rollout trace)
+- [ ] Remote BYO worker registration
 
-### P1b — Harbor second adapter
+### P1b — Harbor backend (when chosen)
 
-- [ ] Spike Harbor Daytona config surface
-- [ ] Sketch `adapters/harbor/` + fake caller CPU test
+- [ ] Instrument Harbor Daytona path under gym recipes
+- [ ] CPU fake-caller contract tests
 
-### P2 — Optional
+### P2
 
-- [ ] 7B when a partner needs it
-- [ ] Soft-fail mixture recipes with curated abort rates
+- [ ] More recipe presets (model catalog)
+- [ ] Detached TrainingRun / wait handles
+- [ ] Soft-fail mixture recipes
 
 ---
 
@@ -69,12 +67,12 @@ Then Harbor spike (P1b) on CPU when edge findings are logged.
 
 | File | Why |
 |---|---|
-| `examples/coding_dogfood/run_edge_case.sh` | Stall / OOM / concurrency / hard prompts |
-| `examples/coding_dogfood/run_on_slime_pod.sh` | Base GPU launcher |
-| `examples/coding_dogfood/GPU_RUN.md` | Pass criteria + edge checklist |
-| `examples/coding_dogfood/FRICTION.md` | War stories |
-| `daytona_gym/cli.py` | `dg` / `dg ls` / `dg stats` |
+| `daytona_gym/gym/` | TrainConfig facade |
+| `examples/gym_sdk/quickstart.py` | Partner entry |
+| `COMPETITIVE_MODAL_GYM.md` | Modal vs us |
+| `examples/coding_dogfood/` | Proven shell path |
+| `daytona_gym/cli.py` | `dg` inspect |
 
 ---
 
-*Next: run edge recipes on H100 → log FRICTION → Harbor spike.*
+*Next: dogfood Gym SDK `--launch` on a BYO GPU box.*
