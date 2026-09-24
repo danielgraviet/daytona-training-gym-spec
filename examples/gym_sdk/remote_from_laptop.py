@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Launch a Gym job on a remote BYO GPU from your laptop.
 
-Requires **direct TCP SSH** to the worker (OpenSSH with SCP), e.g. RunPod
-Connect → SSH over exposed TCP ``root@PUBLIC_IP -p PORT`` — not ``ssh.runpod.io``.
+Prefer resolving RunPod SSH for you (no hand-copy of IP/port):
 
   export DAYTONA_API_KEY='...'
-  export DAYTONA_GYM_SSH=root@64.x.x.x
-  export DAYTONA_GYM_SSH_PORT=12713
+  export RUNPOD_API_KEY='...'
+  export RUNPOD_POD_ID=o2waqhc1bu3o5y          # from the pod page
   export DAYTONA_GYM_SSH_IDENTITY=~/.ssh/id_ed25519
 
-  # worker already has slime:latest layout + this repo cloned
-  python examples/gym_sdk/remote_from_laptop.py
   python examples/gym_sdk/remote_from_laptop.py --launch
+
+Or pass host manually (homelab / any OpenSSH box):
+
+  python examples/gym_sdk/remote_from_laptop.py \\
+    --host root@1.2.3.4 --ssh-port 22 -i ~/.ssh/id_ed25519 --launch
+
+Requires **direct TCP SSH** (SCP). The ``ssh.runpod.io`` proxy is not enough.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from daytona_gym import (
     Qwen25_3B_Recipe,
     SshWorker,
     TrainConfig,
+    runpod_worker,
 )
 from daytona_gym.runtime.errors import DaytonaError
 
@@ -35,7 +40,12 @@ REPO = Path(__file__).resolve().parents[2]
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch", action="store_true")
-    parser.add_argument("--host", default=None, help="Override DAYTONA_GYM_SSH")
+    parser.add_argument(
+        "--pod",
+        default=None,
+        help="RunPod pod id (or RUNPOD_POD_ID) — resolves public IP + SSH port",
+    )
+    parser.add_argument("--host", default=None, help="Manual SSH host user@ip")
     parser.add_argument("--ssh-port", type=int, default=None)
     parser.add_argument("-i", "--identity", default=None)
     parser.add_argument(
@@ -47,23 +57,42 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-preflight", action="store_true")
     args = parser.parse_args(argv)
 
+    remote_repo = args.remote_repo or "/root/daytona-training-gym-spec"
     if args.host:
         worker = SshWorker(
             host=args.host,
             port=args.ssh_port,
             identity=args.identity,
-            remote_repo=args.remote_repo or "/root/daytona-training-gym-spec",
+            remote_repo=remote_repo,
             pull=not args.no_pull,
         )
     else:
-        worker = SshWorker.from_env()
-        if args.ssh_port is not None:
-            worker.port = args.ssh_port
-        if args.identity:
-            worker.identity = args.identity
-        if args.remote_repo:
-            worker.remote_repo = args.remote_repo
-        worker.pull = not args.no_pull
+        try:
+            worker = runpod_worker(
+                args.pod,
+                identity=args.identity,
+                remote_repo=remote_repo,
+                pull=not args.no_pull,
+            )
+        except DaytonaError:
+            try:
+                worker = SshWorker.from_env()
+            except DaytonaError as exc:
+                print(
+                    "Need either --pod / RUNPOD_POD_ID+RUNPOD_API_KEY, "
+                    "or --host / DAYTONA_GYM_SSH.\n"
+                    f"({exc.message})",
+                    file=sys.stderr,
+                )
+                return 2
+            if args.ssh_port is not None:
+                worker.port = args.ssh_port
+            if args.identity:
+                worker.identity = args.identity
+            worker.remote_repo = remote_repo
+            worker.pull = not args.no_pull
+
+    print(f"worker={worker.host}" + (f":{worker.port}" if worker.port else ""), flush=True)
 
     config = TrainConfig(
         model=Qwen25_3B(),
