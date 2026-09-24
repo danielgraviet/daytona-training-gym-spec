@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Launch a Gym job on a remote BYO GPU from your laptop.
+"""Launch a Gym job on a remote BYO GPU from your **laptop** (not on the pod).
 
-Prefer resolving RunPod SSH for you (no hand-copy of IP/port):
+If you are already SSH'd into the GPU box, use instead::
+
+  python examples/gym_sdk/runpod_dogfood.py --launch
+
+From the laptop — RunPod resolves IP/port for you:
 
   export DAYTONA_API_KEY='...'
   export RUNPOD_API_KEY='...'
-  export RUNPOD_POD_ID=o2waqhc1bu3o5y          # from the pod page
+  export RUNPOD_POD_ID=yourpodid
   export DAYTONA_GYM_SSH_IDENTITY=~/.ssh/id_ed25519
 
   python examples/gym_sdk/remote_from_laptop.py --launch
 
-Or pass host manually (homelab / any OpenSSH box):
+Homelab / manual SSH:
 
   python examples/gym_sdk/remote_from_laptop.py \\
     --host root@1.2.3.4 --ssh-port 22 -i ~/.ssh/id_ed25519 --launch
-
-Requires **direct TCP SSH** (SCP). The ``ssh.runpod.io`` proxy is not enough.
 """
 
 from __future__ import annotations
@@ -32,9 +34,56 @@ from daytona_gym import (
     TrainConfig,
     runpod_worker,
 )
-from daytona_gym.runtime.errors import DaytonaError
+from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def _build_worker(args: argparse.Namespace):
+    remote_repo = args.remote_repo or "/root/daytona-training-gym-spec"
+    errors: list[str] = []
+
+    if args.host:
+        return SshWorker(
+            host=args.host,
+            port=args.ssh_port,
+            identity=args.identity,
+            remote_repo=remote_repo,
+            pull=not args.no_pull,
+        )
+
+    try:
+        return runpod_worker(
+            args.pod,
+            identity=args.identity,
+            remote_repo=remote_repo,
+            pull=not args.no_pull,
+        )
+    except DaytonaError as exc:
+        errors.append(f"runpod: [{exc.code}] {exc.message}")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"runpod: {exc}")
+
+    try:
+        worker = SshWorker.from_env()
+    except DaytonaError as exc:
+        errors.append(f"ssh-env: {exc.message}")
+        raise DaytonaError(
+            ErrorCode.USER_CODE_ERROR,
+            "Could not build a worker.\n  - "
+            + "\n  - ".join(errors)
+            + "\n\nIf you are ON the GPU box already, run:\n"
+            "  python examples/gym_sdk/runpod_dogfood.py --launch\n"
+            "This script is for your laptop.",
+        ) from exc
+
+    if args.ssh_port is not None:
+        worker.port = args.ssh_port
+    if args.identity:
+        worker.identity = args.identity
+    worker.remote_repo = remote_repo
+    worker.pull = not args.no_pull
+    return worker
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,40 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-preflight", action="store_true")
     args = parser.parse_args(argv)
 
-    remote_repo = args.remote_repo or "/root/daytona-training-gym-spec"
-    if args.host:
-        worker = SshWorker(
-            host=args.host,
-            port=args.ssh_port,
-            identity=args.identity,
-            remote_repo=remote_repo,
-            pull=not args.no_pull,
-        )
-    else:
-        try:
-            worker = runpod_worker(
-                args.pod,
-                identity=args.identity,
-                remote_repo=remote_repo,
-                pull=not args.no_pull,
-            )
-        except DaytonaError:
-            try:
-                worker = SshWorker.from_env()
-            except DaytonaError as exc:
-                print(
-                    "Need either --pod / RUNPOD_POD_ID+RUNPOD_API_KEY, "
-                    "or --host / DAYTONA_GYM_SSH.\n"
-                    f"({exc.message})",
-                    file=sys.stderr,
-                )
-                return 2
-            if args.ssh_port is not None:
-                worker.port = args.ssh_port
-            if args.identity:
-                worker.identity = args.identity
-            worker.remote_repo = remote_repo
-            worker.pull = not args.no_pull
+    try:
+        worker = _build_worker(args)
+    except DaytonaError as exc:
+        print(exc.message, file=sys.stderr)
+        return 2
 
     print(f"worker={worker.host}" + (f":{worker.port}" if worker.port else ""), flush=True)
 
