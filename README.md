@@ -86,7 +86,10 @@ Example (aspirational):
     prints a live `https://….trycloudflare.com` URL — open that on your Mac. No Edit
     Pod HTTP ports, no file download loop.
   - On a laptop with local traces: `dg dash` opens the browser on localhost.
-- Remote BYO worker registration (SSH / agent) is **not shipped** — `launch()` runs on the GPU box itself.
+- Remote BYO worker: ``SshWorker`` — ``TrainConfig(...).launch(worker=SshWorker(...))``
+  from a laptop over direct TCP SSH. See ``examples/gym_sdk/remote_from_laptop.py``.
+  (``ssh.runpod.io`` gateway is not supported for SCP; use Connect → SSH IP/port.)
+- Outbound worker agent / provider sugar (auto-create RunPod) — **not shipped**.
 
 ## Core architecture
 

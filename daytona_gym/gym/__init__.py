@@ -12,16 +12,19 @@ from daytona_gym.gym.recipe import (
     Qwen25_3B_Recipe,
 )
 from daytona_gym.gym.run import TrainingRun
+from daytona_gym.gym.worker import LocalWorker, SshWorker
 
 __all__ = [
     "CodingRecipe",
     "LocalSlimeCompute",
+    "LocalWorker",
     "PromptJsonlDataset",
     "Qwen25_05B",
     "Qwen25_05B_Recipe",
     "Qwen25_3B",
     "Qwen25_3B_Recipe",
     "SoftSlimeModel",
+    "SshWorker",
     "TrainConfig",
     "TrainingRun",
 ]
