@@ -33,6 +33,7 @@ class PtyShell:
     ) -> None:
         self._on_output = on_output
         self._buf = ""
+        self._closed = False
         master, slave = pty.openpty()
         self._master = master
         self._proc = subprocess.Popen(
@@ -41,6 +42,7 @@ class PtyShell:
             stdout=slave,
             stderr=slave,
             close_fds=True,
+            start_new_session=True,  # own process group — kill without killing us
         )
         os.close(slave)
         try:
@@ -49,24 +51,60 @@ class PtyShell:
                 timeout=connect_timeout,
                 what="shell prompt",
             )
-        except Exception:
+        except BaseException:
             self.close()
             raise
 
     def close(self) -> None:
-        if self._proc.poll() is None:
-            try:
-                self._proc.send_signal(signal.SIGTERM)
-                self._proc.wait(timeout=3)
-            except Exception:  # noqa: BLE001
-                try:
-                    self._proc.kill()
-                except Exception:  # noqa: BLE001
-                    pass
+        """Tear down SSH fast — safe under Ctrl+C (must not hang or re-raise)."""
+        if self._closed:
+            return
+        self._closed = True
         try:
-            os.close(self._master)
-        except OSError:
+            # Forward Ctrl+C to the remote shell so training can stop.
+            try:
+                os.write(self._master, b"\x03")
+            except OSError:
+                pass
+            if self._proc.poll() is None:
+                try:
+                    os.killpg(self._proc.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        self._proc.terminate()
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Short poll — never block long (nested Ctrl+C was hanging here).
+                deadline = time.time() + 0.8
+                while self._proc.poll() is None and time.time() < deadline:
+                    try:
+                        time.sleep(0.05)
+                    except KeyboardInterrupt:
+                        break
+                if self._proc.poll() is None:
+                    try:
+                        os.killpg(self._proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        try:
+                            self._proc.kill()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    try:
+                        self._proc.wait(timeout=0.3)
+                    except Exception:  # noqa: BLE001
+                        pass
+        except KeyboardInterrupt:
+            try:
+                self._proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception:  # noqa: BLE001
             pass
+        finally:
+            try:
+                os.close(self._master)
+            except OSError:
+                pass
 
     def __enter__(self) -> PtyShell:
         return self

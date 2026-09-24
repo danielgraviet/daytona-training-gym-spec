@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     except DaytonaError as exc:
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
 
     print(f"run={run.training_run_id}  exit={run.returncode}")
     if run.dashboard_url:

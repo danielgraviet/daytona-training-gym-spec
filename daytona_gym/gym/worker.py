@@ -325,39 +325,48 @@ class SshWorker:
             sys.stdout.flush()
 
         captured = []
+        interrupted = False
 
         def capture(text: str) -> None:
             captured.append(text)
             on_output(text)
 
-        with PtyShell(ssh_cmd, on_output=capture, connect_timeout=60) as shell:
-            shell.run(f"rm -f {shlex.quote(remote_job)}.b64 {shlex.quote(remote_job)}")
-            for i in range(0, len(b64), 3000):
-                chunk = b64[i : i + 3000]
+        try:
+            with PtyShell(ssh_cmd, on_output=capture, connect_timeout=60) as shell:
                 shell.run(
-                    f"printf '%s' '{chunk}' >> {shlex.quote(remote_job)}.b64"
+                    f"rm -f {shlex.quote(remote_job)}.b64 {shlex.quote(remote_job)}"
                 )
-            shell.run(
-                f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
-            )
+                for i in range(0, len(b64), 3000):
+                    chunk = b64[i : i + 3000]
+                    shell.run(
+                        f"printf '%s' '{chunk}' >> {shlex.quote(remote_job)}.b64"
+                    )
+                shell.run(
+                    f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
+                )
 
-            launch = (
-                f"cd {shlex.quote(self.remote_repo)}"
-                + (" && (git pull --ff-only || true)" if self.pull else "")
-                + " && export DAYTONA_API_KEY="
-                + shlex.quote(api_key)
-                + " && python -m daytona_gym.gym.remote_job "
-                + shlex.quote(remote_job)
-                + "; echo __DG_SHELL_DONE__"
-            )
-            # Training can run for a long time — no wall timeout.
-            shell.run(launch, timeout=None, wait_done_marker="__DG_SHELL_DONE__")
+                launch = (
+                    f"cd {shlex.quote(self.remote_repo)}"
+                    + (" && (git pull --ff-only || true)" if self.pull else "")
+                    + " && export DAYTONA_API_KEY="
+                    + shlex.quote(api_key)
+                    + " && python -m daytona_gym.gym.remote_job "
+                    + shlex.quote(remote_job)
+                    + "; echo __DG_SHELL_DONE__"
+                )
+                # Training can run for a long time — no wall timeout.
+                shell.run(
+                    launch, timeout=None, wait_done_marker="__DG_SHELL_DONE__"
+                )
+        except KeyboardInterrupt:
+            interrupted = True
+            print("\nInterrupted — closed remote SSH session.", flush=True)
 
         text = "".join(captured)
         run_id = ""
         telemetry = ""
         dashboard: str | None = None
-        returncode = 1
+        returncode = 130 if interrupted else 1
         for line in text.replace("\r", "\n").splitlines():
             stripped = line.strip()
             if m := _RUN_RE.match(stripped):
@@ -367,7 +376,8 @@ class SshWorker:
             elif m := _DASH_RE.match(stripped):
                 dashboard = m.group(1).strip()
             elif m := _RC_RE.match(stripped):
-                returncode = int(m.group(1))
+                if not interrupted:
+                    returncode = int(m.group(1))
 
         if not run_id:
             run_id = "remote_unknown"
