@@ -185,11 +185,35 @@ class SshWorker:
             scp = self._scp_base() + [str(local_job), f"{self.host}:{remote_job}"]
             scp_proc = subprocess.run(scp, capture_output=True, text=True)
             if scp_proc.returncode != 0:
-                raise DaytonaError(
-                    ErrorCode.PLATFORM_ERROR,
+                err = (scp_proc.stderr or "").strip()
+                hint = (
                     "scp to worker failed — use direct TCP SSH "
-                    f"(root@IP -p PORT), not ssh.runpod.io.\n{scp_proc.stderr.strip()}",
+                    f"(root@IP -p PORT), not ssh.runpod.io.\n{err}"
                 )
+                low = err.lower()
+                if "connection refused" in low:
+                    hint = (
+                        f"SSH port is mapped but nothing is listening on "
+                        f"{self.host}"
+                        + (f":{self.port}" if self.port else "")
+                        + " (connection refused).\n"
+                        "RunPod exposed 22/tcp, but sshd is not running in the "
+                        "container.\n\n"
+                        "Fix one of:\n"
+                        "  1. Pod Connect → confirm 'SSH over exposed TCP' works\n"
+                        "     (official PyTorch template + SSH Terminal Access, "
+                        "or start sshd in the container start command).\n"
+                        "  2. Or launch on the box instead:\n"
+                        "     python examples/gym_sdk/runpod_dogfood.py --launch\n"
+                        f"\n{err}"
+                    )
+                elif "permission denied" in low:
+                    hint = (
+                        "SSH auth failed — check DAYTONA_GYM_SSH_IDENTITY matches "
+                        "the public key in the RunPod pod env / account SSH keys.\n"
+                        f"{err}"
+                    )
+                raise DaytonaError(ErrorCode.PLATFORM_ERROR, hint)
 
             remote_bits = [
                 f"cd {shlex.quote(self.remote_repo)}",
