@@ -106,10 +106,20 @@ def spawn_detached_run(job_json: Path, payload: dict) -> TrainingRun:
     )
     log_f.close()
 
-    timeout = float(payload.get("detach_ready_timeout_seconds", 180))
+    timeout = float(payload.get("detach_ready_timeout_seconds", 1200))
     deadline = time.time() + timeout
     data: dict | None = None
+    last_note = 0.0
+    print(
+        "waiting for worker dashboard "
+        "(first boot may download+convert the model; using HF_TOKEN if set) …",
+        flush=True,
+    )
     while time.time() < deadline:
+        now = time.time()
+        if now - last_note >= 30:
+            print(f"  still waiting… ({int(now - (deadline - timeout))}s) log={log}", flush=True)
+            last_note = now
         if status.is_file():
             try:
                 data = json.loads(status.read_text(encoding="utf-8"))
@@ -184,6 +194,16 @@ def _run_supervised(payload: dict) -> int:
     status_path = Path(os.environ[_STATUS_ENV])
     config = load_config(payload)
     try:
+        # Apply forwarded laptop secrets (HF_TOKEN, …) before model prep.
+        for key, val in (payload.get("forward_env") or {}).items():
+            if isinstance(key, str) and isinstance(val, str) and val:
+                os.environ.setdefault(key, val)
+
+        if config.model is not None:
+            from daytona_gym.gym.model_prep import ensure_model_ready
+
+            ensure_model_ready(config.model)
+
         config.validate(require_existing_paths=True)
         from daytona_gym.gym.launch import build_plan, execute_plan
 
@@ -272,6 +292,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     payload = json.loads(args.job_json.read_text(encoding="utf-8"))
+    for key, val in (payload.get("forward_env") or {}).items():
+        if isinstance(key, str) and isinstance(val, str) and val:
+            os.environ.setdefault(key, val)
+
     supervised = os.environ.get(_SUPERVISED_ENV) == "1"
     want_detach = bool(payload.get("detach", False))
 

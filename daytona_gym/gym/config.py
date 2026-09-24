@@ -161,6 +161,11 @@ class TrainConfig:
                 job_path = Path(fh.name)
             return spawn_detached_run(job_path, payload)
 
+        if self.model is not None:
+            from daytona_gym.gym.model_prep import ensure_model_ready
+
+            ensure_model_ready(self.model)
+
         self.validate(require_existing_paths=True)
         plan = build_plan(self)
         run = execute_plan(

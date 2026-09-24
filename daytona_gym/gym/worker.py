@@ -31,7 +31,33 @@ _DASH_RE = re.compile(r"^__DG_DASHBOARD__=(.+)$")
 _RC_RE = re.compile(r"^__DG_RETURNCODE__=(\d+)$")
 _DETACHED_RE = re.compile(r"^__DG_DETACHED__=1$")
 
-Transport = Literal["auto", "exec", "shell"]
+_FORWARD_ENV_KEYS = (
+    "DAYTONA_API_KEY",
+    "DAYTONA_API_URL",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "HF_HUB_TOKEN",
+)
+
+
+def _forward_env_from_local() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key in _FORWARD_ENV_KEYS:
+        val = (os.environ.get(key) or "").strip()
+        if val:
+            out[key] = val
+    return out
+
+
+def _export_forward_env_cmd(extra: dict[str, str] | None = None) -> str:
+    merged = _forward_env_from_local()
+    if extra:
+        merged.update({k: v for k, v in extra.items() if v})
+    if not merged:
+        return "true"
+    return " && ".join(
+        f"export {key}={shlex.quote(val)}" for key, val in merged.items()
+    )
 
 
 class Worker(Protocol):
@@ -263,9 +289,7 @@ class SshWorker:
             ]
             if self.pull:
                 remote_bits.append("git pull --ff-only || true")
-            remote_bits.append(
-                "export DAYTONA_API_KEY=" + shlex.quote(api_key)
-            )
+            remote_bits.append(_export_forward_env_cmd(payload.get("forward_env")))
             remote_bits.append(
                 "python -m daytona_gym.gym.remote_job " + shlex.quote(remote_job)
             )
@@ -387,8 +411,8 @@ class SshWorker:
                     self._ensure_remote_repo_cmd()
                     + f" && cd {shlex.quote(self.remote_repo)}"
                     + (" && (git pull --ff-only || true)" if self.pull else "")
-                    + " && export DAYTONA_API_KEY="
-                    + shlex.quote(api_key)
+                    + " && "
+                    + _export_forward_env_cmd(payload.get("forward_env"))
                     + " && python -m daytona_gym.gym.remote_job "
                     + shlex.quote(remote_job)
                     + "; echo __DG_SHELL_DONE__"
@@ -506,6 +530,7 @@ def config_to_remote_payload(
         "open": open,
         "open_browser": open_browser,
         "detach": detach,
+        "forward_env": _forward_env_from_local(),
     }
 
 
