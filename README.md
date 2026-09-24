@@ -81,6 +81,8 @@ Example (aspirational):
 - Slime × Daytona coding dogfood is **proven** on BYO H100 (`examples/coding_dogfood/`, edge suite in `FRICTION.md`).
 - **Gym SDK skeleton is shipped:** `TrainConfig(...).launch(dry_run=True|False)` builds (and on a Slime GPU host, runs) the same wiring as the dogfood shell script. See `examples/gym_sdk/quickstart.py`.
 - After a real `launch()`, the run handle can open a live dashboard: `run.open()` / `launch(open=True)` sets `run.dashboard_url` (Cloudflare tunnel on RunPod).
+- **Detached:** `launch(detach=True)` (or `remote_from_laptop.py --launch --detach`) returns as soon as
+  `run.training_run_id` + `run.dashboard_url` are ready; training keeps going on the GPU worker.
 - Local dashboard: `dg dash` / `dg open` over `runs/*.jsonl`.
   - **On RunPod / SSH GPU:** `dg dash` (or `launch(open=True)`) starts an outbound Cloudflare quick tunnel and
     prints a live `https://….trycloudflare.com` URL — open that on your Mac. No Edit

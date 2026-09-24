@@ -91,13 +91,26 @@ class TrainConfig:
         preflight_timeout_seconds: float = 90,
         open: bool | None = None,
         open_browser: bool = False,
+        detach: bool = False,
     ) -> TrainingRun:
         """Start training on a BYO worker (local by default, or ``SshWorker``).
 
         ``open`` (default: True after a real launch) starts the live dashboard
         and sets ``run.dashboard_url`` (Cloudflare tunnel on RunPod/SSH).
+
+        ``detach=True``: return as soon as ``run_id`` + ``dashboard_url`` are
+        ready; training keeps running on the worker (Modal-shaped handle).
+        Implies ``open=True`` (dashboard URL is the whole point).
         """
         from daytona_gym.gym.worker import LocalWorker
+
+        if detach and open is False:
+            raise DaytonaError(
+                ErrorCode.USER_CODE_ERROR,
+                "detach=True requires a dashboard URL (do not pass open=False)",
+            )
+        if detach:
+            open = True
 
         w: Worker = worker if worker is not None else LocalWorker()
         return w.launch(
@@ -107,6 +120,7 @@ class TrainConfig:
             preflight_timeout_seconds=preflight_timeout_seconds,
             open=open,
             open_browser=open_browser,
+            detach=detach,
         )
 
     def _launch_local(
@@ -117,10 +131,36 @@ class TrainConfig:
         preflight_timeout_seconds: float = 90,
         open: bool | None = None,
         open_browser: bool = False,
+        detach: bool = False,
     ) -> TrainingRun:
         """On-box launch (used by ``LocalWorker`` and ``remote_job``)."""
         if dry_run:
             return self.build()
+        if detach:
+            # Supervised child holds dash + train so this process can return.
+            import json
+            import tempfile
+
+            from daytona_gym.gym.remote_job import spawn_detached_run
+            from daytona_gym.gym.worker import config_to_remote_payload
+
+            repo = str(Path(self.repo).expanduser().resolve()) if self.repo else "."
+            payload = config_to_remote_payload(
+                self,
+                remote_repo=repo,
+                skip_preflight=skip_preflight,
+                preflight_timeout_seconds=preflight_timeout_seconds,
+                open=True if open is None else open,
+                open_browser=open_browser,
+            )
+            payload["detach"] = True
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            ) as fh:
+                json.dump(payload, fh)
+                job_path = Path(fh.name)
+            return spawn_detached_run(job_path, payload)
+
         self.validate(require_existing_paths=True)
         plan = build_plan(self)
         run = execute_plan(

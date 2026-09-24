@@ -29,6 +29,7 @@ _RUN_RE = re.compile(r"^__DG_RUN_ID__=(.+)$")
 _TELEMETRY_RE = re.compile(r"^__DG_TELEMETRY__=(.+)$")
 _DASH_RE = re.compile(r"^__DG_DASHBOARD__=(.+)$")
 _RC_RE = re.compile(r"^__DG_RETURNCODE__=(\d+)$")
+_DETACHED_RE = re.compile(r"^__DG_DETACHED__=1$")
 
 Transport = Literal["auto", "exec", "shell"]
 
@@ -45,6 +46,7 @@ class Worker(Protocol):
         preflight_timeout_seconds: float = 90,
         open: bool | None = None,
         open_browser: bool = False,
+        detach: bool = False,
     ) -> TrainingRun: ...
 
 
@@ -63,6 +65,7 @@ class LocalWorker:
         preflight_timeout_seconds: float = 90,
         open: bool | None = None,
         open_browser: bool = False,
+        detach: bool = False,
     ) -> TrainingRun:
         return config._launch_local(
             dry_run=dry_run,
@@ -70,6 +73,7 @@ class LocalWorker:
             preflight_timeout_seconds=preflight_timeout_seconds,
             open=open,
             open_browser=open_browser,
+            detach=detach,
         )
 
 
@@ -120,6 +124,7 @@ class SshWorker:
         preflight_timeout_seconds: float = 90,
         open: bool | None = None,
         open_browser: bool = False,
+        detach: bool = False,
     ) -> TrainingRun:
         if dry_run:
             # Plan is local/CPU-safe; remote not required.
@@ -132,6 +137,7 @@ class SshWorker:
             preflight_timeout_seconds=preflight_timeout_seconds,
             open=True if open is None else open,
             open_browser=open_browser,
+            detach=detach,
         )
         mode = self._resolve_transport()
         if mode == "shell":
@@ -258,6 +264,7 @@ class SshWorker:
             telemetry = ""
             dashboard: str | None = None
             returncode = 1
+            detached = False
             for line in proc.stdout:
                 sys.stdout.write(line)
                 sys.stdout.flush()
@@ -268,6 +275,8 @@ class SshWorker:
                     telemetry = m.group(1).strip()
                 elif m := _DASH_RE.match(text):
                     dashboard = m.group(1).strip()
+                elif _DETACHED_RE.match(text):
+                    detached = True
                 elif m := _RC_RE.match(text):
                     returncode = int(m.group(1))
             rc = proc.wait()
@@ -281,17 +290,23 @@ class SshWorker:
                 telemetry_path=telemetry,
                 command=ssh_cmd,
                 env={"DAYTONA_GYM_WORKER": self.host},
-                runtime_env={"worker": "ssh", "host": self.host},
+                runtime_env={"worker": "ssh", "host": self.host, "detached": detached},
                 dry_run=False,
-                returncode=returncode if rc == 0 else rc,
+                returncode=None if detached else (returncode if rc == 0 else rc),
                 inspect_hint=f"dg stats {telemetry}"
                 + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
                 dashboard_url=dashboard,
+                detached=detached,
             )
             if dashboard:
                 print(flush=True)
                 print("=" * 60, flush=True)
-                print("  → OPEN  (from worker tunnel)", flush=True)
+                print(
+                    "  → OPEN  (detached — training continues on worker)"
+                    if detached
+                    else "  → OPEN  (from worker tunnel)",
+                    flush=True,
+                )
                 print(f"  {dashboard}", flush=True)
                 print("=" * 60, flush=True)
                 print(flush=True)
@@ -367,6 +382,7 @@ class SshWorker:
         telemetry = ""
         dashboard: str | None = None
         returncode = 130 if interrupted else 1
+        detached = False
         for line in text.replace("\r", "\n").splitlines():
             stripped = line.strip()
             if m := _RUN_RE.match(stripped):
@@ -375,6 +391,8 @@ class SshWorker:
                 telemetry = m.group(1).strip()
             elif m := _DASH_RE.match(stripped):
                 dashboard = m.group(1).strip()
+            elif _DETACHED_RE.match(stripped):
+                detached = True
             elif m := _RC_RE.match(stripped):
                 if not interrupted:
                     returncode = int(m.group(1))
@@ -383,23 +401,35 @@ class SshWorker:
             run_id = "remote_unknown"
         if not telemetry:
             telemetry = f"{self.remote_repo}/runs/{run_id}.jsonl"
+        if detached and not interrupted:
+            returncode = None
 
         run = TrainingRun(
             run_id=run_id,
             telemetry_path=telemetry,
             command=ssh_cmd,
             env={"DAYTONA_GYM_WORKER": self.host},
-            runtime_env={"worker": "ssh-shell", "host": self.host},
+            runtime_env={
+                "worker": "ssh-shell",
+                "host": self.host,
+                "detached": detached,
+            },
             dry_run=False,
             returncode=returncode,
             inspect_hint=f"dg stats {telemetry}"
             + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
             dashboard_url=dashboard,
+            detached=detached,
         )
-        if dashboard:
+        if dashboard and not interrupted:
             print(flush=True)
             print("=" * 60, flush=True)
-            print("  → OPEN  (from worker tunnel)", flush=True)
+            print(
+                "  → OPEN  (detached — training continues on worker)"
+                if detached
+                else "  → OPEN  (from worker tunnel)",
+                flush=True,
+            )
             print(f"  {dashboard}", flush=True)
             print("=" * 60, flush=True)
             print(flush=True)
@@ -414,6 +444,7 @@ def config_to_remote_payload(
     preflight_timeout_seconds: float,
     open: bool,
     open_browser: bool,
+    detach: bool = False,
 ) -> dict[str, Any]:
     """JSON payload consumed by ``python -m daytona_gym.gym.remote_job`` on the worker."""
     compute = config.resolved_compute()
@@ -450,6 +481,7 @@ def config_to_remote_payload(
         "preflight_timeout_seconds": preflight_timeout_seconds,
         "open": open,
         "open_browser": open_browser,
+        "detach": detach,
     }
 
 

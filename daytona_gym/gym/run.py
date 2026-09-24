@@ -18,6 +18,12 @@ class TrainingRun:
         run = config.launch()
         print(run.open())                # start dash + tunnel; returns URL
         run.wait_dashboard()             # block until Ctrl+C
+
+    Detached (laptop returns immediately)::
+
+        run = config.launch(worker=..., detach=True)
+        print(run.training_run_id)
+        print(run.dashboard_url)         # live while the GPU job runs
     """
 
     run_id: str
@@ -30,6 +36,7 @@ class TrainingRun:
     model_script: str = ""
     inspect_hint: str = ""
     dashboard_url: str | None = None
+    detached: bool = False
     _dashboard: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:

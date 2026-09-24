@@ -118,7 +118,49 @@ def test_ssh_worker_parses_markers(tmp_path: Path, monkeypatch) -> None:
     assert run.returncode == 0
 
 
-def test_ssh_worker_from_env(monkeypatch) -> None:
+def test_ssh_worker_parses_detached_markers(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    from daytona_gym.gym.run import TrainingRun
+
+    cfg = _config(tmp_path)
+    worker = SshWorker(
+        host="root@1.2.3.4",
+        port=22,
+        identity="/tmp/key",
+        pull=False,
+        transport="exec",
+    )
+    monkeypatch.setenv("DAYTONA_API_KEY", "test-key")
+
+    def fake_run(cmd, capture_output=False, text=False):  # noqa: ANN001
+        assert cmd[0] == "scp"
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    class FakePopen:
+        def __init__(self, cmd, stdout=None, stderr=None, text=False, bufsize=0):  # noqa: ANN001
+            self.stdout = iter(
+                [
+                    "__DG_RUN_ID__=run_det_1\n",
+                    "__DG_TELEMETRY__=/root/runs/run_det_1.jsonl\n",
+                    "__DG_DASHBOARD__=https://x.trycloudflare.com/run/run_det_1\n",
+                    "__DG_DETACHED__=1\n",
+                    "__DG_RETURNCODE__=0\n",
+                ]
+            )
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+
+    run = cfg.launch(worker=worker, dry_run=False, open=True, detach=True)
+    assert isinstance(run, TrainingRun)
+    assert run.detached is True
+    assert run.returncode is None
+    assert run.run_id == "run_det_1"
+    assert run.dashboard_url == "https://x.trycloudflare.com/run/run_det_1"
     monkeypatch.setenv("DAYTONA_GYM_SSH", "root@1.2.3.4")
     monkeypatch.setenv("DAYTONA_GYM_SSH_PORT", "2222")
     monkeypatch.setenv("DAYTONA_GYM_SSH_IDENTITY", "~/.ssh/id_ed25519")

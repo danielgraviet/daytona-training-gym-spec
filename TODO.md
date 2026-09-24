@@ -37,8 +37,12 @@ python examples/gym_sdk/quickstart.py
 
 1. ~~Dogfood `launch()` on H100~~ — **done** (Gym SDK on RunPod).
 2. ~~Wire `TrainingRun` → live dash URL~~ — **done** (`launch(open=True)` / `run.open()`).
-3. ~~BYO `SshWorker`~~ — **done** (laptop → direct TCP SSH → remote launch).
-4. Optional: outbound AgentWorker; RunPod “create pod → SshWorker” sugar; Harbor-as-backend.
+3. ~~BYO `SshWorker`~~ — **done** (laptop → RunPod **proxy PTY** + direct TCP when sshd exists).
+4. ~~Detached `TrainingRun`~~ — **done** (`launch(detach=True)` / `--detach` → run id + dash URL; train continues on worker).
+5. Pick one:
+   - **RunPod create-pod sugar** (`runpod_worker` that creates+waits, not just resolves).
+   - **Outbound AgentWorker** (pod dials out; no inbound SSH at all).
+   - Harbor-as-backend when chosen.
 
 Parked: `dg harbor` CLI wrapper; PyPI until API stabilizes.
 
@@ -52,7 +56,7 @@ Parked: `dg harbor` CLI wrapper; PyPI until API stabilizes.
 - [x] Local dashboard v0 (`dg dash` / `dg open` — reward / wall / rollout timeline)
 - [x] `TrainingRun.open()` / `launch(open=True)` → live tunnel URL
 - [ ] Hosted Daytona dashboard URL (drop Cloudflare dependency)
-- [x] Remote BYO worker via ``SshWorker`` (direct TCP SSH)
+- [x] Remote BYO worker via ``SshWorker`` (RunPod proxy PTY + direct TCP)
 - [ ] Outbound AgentWorker (no inbound SSH)
 - [ ] Optional provider helpers (e.g. RunPod create → SshWorker)
 
@@ -64,7 +68,7 @@ Parked: `dg harbor` CLI wrapper; PyPI until API stabilizes.
 ### P2
 
 - [ ] More recipe presets (model catalog)
-- [ ] Detached TrainingRun / wait handles
+- [x] Detached TrainingRun / wait handles (`launch(detach=True)` → run id + dash URL)
 - [ ] Soft-fail mixture recipes
 
 ---

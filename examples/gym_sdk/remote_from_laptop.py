@@ -12,6 +12,10 @@ RunPod (recommended)::
 
   python examples/gym_sdk/remote_from_laptop.py --launch
 
+Detached (return run id + dash URL; training keeps going on the pod)::
+
+  python examples/gym_sdk/remote_from_laptop.py --launch --detach
+
 Uses RunPod proxy SSH (``user@ssh.runpod.io``) with a PTY shell, so it works
 even when the container has no ``sshd`` (e.g. slime + ``sleep infinity``).
 
@@ -108,6 +112,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-pull", action="store_true")
     parser.add_argument("--skip-preflight", action="store_true")
+    parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="Return as soon as run id + dashboard URL are ready; train continues on the pod",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -132,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             worker=worker,
             dry_run=not args.launch,
             skip_preflight=args.skip_preflight,
+            detach=args.detach,
         )
     except DaytonaError as exc:
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
@@ -140,14 +150,18 @@ def main(argv: list[str] | None = None) -> int:
         print("\nInterrupted.", file=sys.stderr)
         return 130
 
-    print(f"run={run.training_run_id}  exit={run.returncode}")
+    print(f"run={run.training_run_id}")
     if run.dashboard_url:
         print(f"dashboard={run.dashboard_url}")
     else:
         print(f"inspect={run.inspect_hint}")
+    if run.detached:
+        print("detached=true  (training continues on the worker)")
+    elif run.returncode is not None:
+        print(f"exit={run.returncode}")
     if not args.launch:
         print("\nRe-run with --launch when the worker SSH is ready.")
-    return int(run.returncode or 0)
+    return 0 if run.detached else int(run.returncode or 0)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,20 @@
 """Run on a GPU worker: ``python -m daytona_gym.gym.remote_job /tmp/job.json``.
 
 Prints machine-parseable markers for the laptop-side ``SshWorker``.
+
+Detached mode (``payload["detach"]=true``): spawn a long-lived child that holds
+the dashboard + training, write a status file once the dash URL is ready, print
+markers to the parent, and exit so the laptop can return immediately.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from daytona_gym.gym.compute import LocalSlimeCompute
@@ -15,7 +22,10 @@ from daytona_gym.gym.config import TrainConfig
 from daytona_gym.gym.dataset import PromptJsonlDataset
 from daytona_gym.gym.models import SoftSlimeModel
 from daytona_gym.gym.recipe import CodingRecipe
-from daytona_gym.runtime.errors import DaytonaError
+from daytona_gym.runtime.errors import DaytonaError, ErrorCode
+
+_STATUS_ENV = "DAYTONA_GYM_STATUS_FILE"
+_SUPERVISED_ENV = "DAYTONA_GYM_SUPERVISED"
 
 
 def load_config(payload: dict) -> TrainConfig:
@@ -42,12 +52,236 @@ def load_config(payload: dict) -> TrainConfig:
     )
 
 
+def _print_markers(
+    *,
+    run_id: str,
+    telemetry: str,
+    dashboard: str | None,
+    returncode: int | None,
+    detached: bool = False,
+) -> None:
+    print(f"__DG_RUN_ID__={run_id}", flush=True)
+    print(f"__DG_TELEMETRY__={telemetry}", flush=True)
+    if dashboard:
+        print(f"__DG_DASHBOARD__={dashboard}", flush=True)
+    if detached:
+        print("__DG_DETACHED__=1", flush=True)
+    if returncode is not None:
+        print(f"__DG_RETURNCODE__={int(returncode)}", flush=True)
+
+
+def _write_status(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+def spawn_detached_run(job_json: Path, payload: dict) -> TrainingRun:
+    """Start supervised child; return handle once dashboard URL is ready."""
+    from daytona_gym.gym.run import TrainingRun
+
+    stamp = f"{os.getpid()}_{int(time.time())}"
+    status = Path(f"/tmp/daytona_gym_status_{stamp}.json")
+    log = Path(f"/tmp/daytona_gym_detach_{stamp}.log")
+    if status.exists():
+        status.unlink()
+
+    env = os.environ.copy()
+    env[_SUPERVISED_ENV] = "1"
+    env[_STATUS_ENV] = str(status)
+
+    child_payload = dict(payload)
+    child_payload["detach"] = False
+    child_job = Path(f"/tmp/daytona_gym_job_supervised_{stamp}.json")
+    child_job.write_text(json.dumps(child_payload, indent=2), encoding="utf-8")
+
+    log_f = log.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "daytona_gym.gym.remote_job", str(child_job)],
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
+        env=env,
+        start_new_session=True,
+    )
+    log_f.close()
+
+    timeout = float(payload.get("detach_ready_timeout_seconds", 180))
+    deadline = time.time() + timeout
+    data: dict | None = None
+    while time.time() < deadline:
+        if status.is_file():
+            try:
+                data = json.loads(status.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict) and data.get("dashboard_url"):
+                break
+            if isinstance(data, dict) and data.get("error"):
+                raise DaytonaError(
+                    ErrorCode.PLATFORM_ERROR,
+                    f"detached worker failed: {data['error']}",
+                )
+        if proc.poll() is not None and not (
+            isinstance(data, dict) and data.get("dashboard_url")
+        ):
+            tail = ""
+            try:
+                tail = log.read_text(encoding="utf-8", errors="replace")[-800:]
+            except OSError:
+                pass
+            raise DaytonaError(
+                ErrorCode.PLATFORM_ERROR,
+                "detached worker exited before dashboard was ready.\n" + tail,
+            )
+        time.sleep(0.5)
+
+    if not isinstance(data, dict) or not data.get("dashboard_url"):
+        raise DaytonaError(
+            ErrorCode.PLATFORM_ERROR,
+            f"timed out after {timeout:.0f}s waiting for dashboard URL "
+            f"(log: {log})",
+        )
+
+    run_id = str(data["run_id"])
+    telemetry = str(data["telemetry_path"])
+    dashboard = str(data["dashboard_url"])
+    _print_markers(
+        run_id=run_id,
+        telemetry=telemetry,
+        dashboard=dashboard,
+        returncode=0,
+        detached=True,
+    )
+    print(f"detached_pid={proc.pid}  log={log}", flush=True)
+    return TrainingRun(
+        run_id=run_id,
+        telemetry_path=telemetry,
+        command=[sys.executable, "-m", "daytona_gym.gym.remote_job", str(child_job)],
+        env={},
+        runtime_env={"detached": True, "pid": proc.pid, "log": str(log)},
+        dry_run=False,
+        returncode=None,
+        inspect_hint=f"dg stats {telemetry}  |  {dashboard}",
+        dashboard_url=dashboard,
+        detached=True,
+    )
+
+
+def _spawn_detached(job_json: Path, payload: dict) -> int:
+    """CLI parent entry: spawn + print markers; return process exit code."""
+    try:
+        spawn_detached_run(job_json, payload)
+        return 0
+    except DaytonaError as exc:
+        print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
+        print("__DG_RETURNCODE__=2", flush=True)
+        return 2
+
+
+def _run_supervised(payload: dict) -> int:
+    """Child: dash first → status file → train → keep dash alive."""
+    status_path = Path(os.environ[_STATUS_ENV])
+    config = load_config(payload)
+    try:
+        config.validate(require_existing_paths=True)
+        from daytona_gym.gym.launch import build_plan, execute_plan
+
+        plan = build_plan(config)
+        from daytona_gym.gym.run import TrainingRun
+
+        run = TrainingRun(
+            run_id=plan.run_id,
+            telemetry_path=str(plan.telemetry_path),
+            command=[],
+            env=dict(plan.host_env),
+            runtime_env=dict(plan.runtime_env),
+            dry_run=False,
+            returncode=None,
+            model_script=plan.model_script,
+            detached=True,
+        )
+        should_open = bool(payload.get("open", True))
+        dashboard: str | None = None
+        if should_open:
+            dashboard = run.open(
+                open_browser=bool(payload.get("open_browser", False))
+            )
+            print(flush=True)
+            print("=" * 60, flush=True)
+            print("  → OPEN  (training starting)", flush=True)
+            print(f"  {dashboard}", flush=True)
+            print("=" * 60, flush=True)
+            print(flush=True)
+
+        _write_status(
+            status_path,
+            {
+                "run_id": run.training_run_id,
+                "telemetry_path": run.telemetry_path,
+                "dashboard_url": dashboard,
+                "pid": os.getpid(),
+            },
+        )
+        # Also print markers into the detach log for humans.
+        _print_markers(
+            run_id=run.training_run_id,
+            telemetry=run.telemetry_path,
+            dashboard=dashboard,
+            returncode=None,
+            detached=True,
+        )
+
+        finished = execute_plan(
+            plan,
+            skip_preflight=bool(payload.get("skip_preflight", False)),
+            preflight_timeout_seconds=float(
+                payload.get("preflight_timeout_seconds", 90)
+            ),
+        )
+        run.returncode = finished.returncode
+        run.command = finished.command
+        _print_markers(
+            run_id=run.training_run_id,
+            telemetry=run.telemetry_path,
+            dashboard=dashboard,
+            returncode=int(run.returncode or 0),
+            detached=True,
+        )
+        if dashboard:
+            run.wait_dashboard()
+        return int(run.returncode or 0)
+    except DaytonaError as exc:
+        _write_status(
+            status_path,
+            {"error": f"[{exc.code}] {exc.message}", "run_id": "failed"},
+        )
+        print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
+        print("__DG_RETURNCODE__=2", flush=True)
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        _write_status(status_path, {"error": str(exc), "run_id": "failed"})
+        print(f"daytona error: {exc}", file=sys.stderr)
+        print("__DG_RETURNCODE__=2", flush=True)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("job_json", type=Path, help="Path to job payload JSON")
     args = parser.parse_args(argv)
 
     payload = json.loads(args.job_json.read_text(encoding="utf-8"))
+    supervised = os.environ.get(_SUPERVISED_ENV) == "1"
+    want_detach = bool(payload.get("detach", False))
+
+    if want_detach and not supervised:
+        return _spawn_detached(args.job_json, payload)
+
+    if supervised:
+        return _run_supervised(payload)
+
+    # Attached (legacy): train to completion, then open dash.
     config = load_config(payload)
     try:
         run = config._launch_local(
@@ -58,18 +292,19 @@ def main(argv: list[str] | None = None) -> int:
             ),
             open=bool(payload.get("open", True)),
             open_browser=bool(payload.get("open_browser", False)),
+            detach=False,
         )
     except DaytonaError as exc:
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
         print("__DG_RETURNCODE__=2", flush=True)
         return 2
 
-    print(f"__DG_RUN_ID__={run.training_run_id}", flush=True)
-    print(f"__DG_TELEMETRY__={run.telemetry_path}", flush=True)
-    if run.dashboard_url:
-        print(f"__DG_DASHBOARD__={run.dashboard_url}", flush=True)
-    print(f"__DG_RETURNCODE__={int(run.returncode or 0)}", flush=True)
-
+    _print_markers(
+        run_id=run.training_run_id,
+        telemetry=run.telemetry_path,
+        dashboard=run.dashboard_url,
+        returncode=int(run.returncode or 0),
+    )
     if run.dashboard_url:
         run.wait_dashboard()
     return int(run.returncode or 0)
