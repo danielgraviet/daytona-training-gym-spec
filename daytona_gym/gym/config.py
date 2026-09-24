@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,14 +80,29 @@ class TrainConfig:
         dry_run: bool = False,
         skip_preflight: bool = False,
         preflight_timeout_seconds: float = 90,
+        open: bool | None = None,
+        open_browser: bool = False,
     ) -> TrainingRun:
-        """Start Slime on this BYO GPU host, or return the plan when ``dry_run``."""
+        """Start Slime on this BYO GPU host, or return the plan when ``dry_run``.
+
+        ``open`` (default: True after a real launch) starts the live dashboard
+        and sets ``run.dashboard_url`` (Cloudflare tunnel on RunPod/SSH).
+        """
         if dry_run:
             return self.build()
         self.validate(require_existing_paths=True)
         plan = build_plan(self)
-        return execute_plan(
+        run = execute_plan(
             plan,
             skip_preflight=skip_preflight,
             preflight_timeout_seconds=preflight_timeout_seconds,
         )
+        should_open = True if open is None else open
+        if should_open:
+            try:
+                url = run.open(open_browser=open_browser)
+                print(f"dashboard: {url}", flush=True)
+            except Exception as exc:  # noqa: BLE001 — launch succeeded; dash is best-effort
+                print(f"dashboard open failed: {exc}", file=sys.stderr)
+                print(f"inspect: {run.inspect_hint}", file=sys.stderr)
+        return run

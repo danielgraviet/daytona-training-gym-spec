@@ -55,6 +55,8 @@ config = TrainConfig(
 )
 run = config.launch(dry_run=True)  # or launch() on a Slime GPU host
 print(run.training_run_id, run.inspect_hint)
+# after a real launch with open=True (default):
+# print(run.dashboard_url)  # live trycloudflare / localhost URL
 ```
 
 Expected result:
@@ -78,8 +80,9 @@ Example (aspirational):
 
 - Slime × Daytona coding dogfood is **proven** on BYO H100 (`examples/coding_dogfood/`, edge suite in `FRICTION.md`).
 - **Gym SDK skeleton is shipped:** `TrainConfig(...).launch(dry_run=True|False)` builds (and on a Slime GPU host, runs) the same wiring as the dogfood shell script. See `examples/gym_sdk/quickstart.py`.
+- After a real `launch()`, the run handle can open a live dashboard: `run.open()` / `launch(open=True)` sets `run.dashboard_url` (Cloudflare tunnel on RunPod).
 - Local dashboard: `dg dash` / `dg open` over `runs/*.jsonl`.
-  - **On RunPod / SSH GPU:** `dg dash` starts an outbound Cloudflare quick tunnel and
+  - **On RunPod / SSH GPU:** `dg dash` (or `launch(open=True)`) starts an outbound Cloudflare quick tunnel and
     prints a live `https://….trycloudflare.com` URL — open that on your Mac. No Edit
     Pod HTTP ports, no file download loop.
   - On a laptop with local traces: `dg dash` opens the browser on localhost.

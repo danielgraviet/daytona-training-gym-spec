@@ -101,3 +101,86 @@ def test_requires_model_or_compute(tmp_path: Path) -> None:
             recipe=CodingRecipe(),
         )
     assert caught.value.code == ErrorCode.USER_CODE_ERROR
+
+
+def test_training_run_open_sets_dashboard_url(tmp_path: Path, monkeypatch) -> None:
+    from daytona_gym.gym.run import TrainingRun
+    from daytona_gym.telemetry.dashboard import DashboardHandle
+
+    telemetry = tmp_path / "runs" / "run_abc.jsonl"
+    telemetry.parent.mkdir(parents=True)
+    telemetry.write_text("{}\n")
+
+    class FakeHttpd:
+        def shutdown(self) -> None:
+            return
+
+        def server_close(self) -> None:
+            return
+
+    fake = DashboardHandle(
+        url="https://example.trycloudflare.com/",
+        local_url="http://127.0.0.1:8765/",
+        runs_dir=telemetry.parent,
+        shared=True,
+        _httpd=FakeHttpd(),  # type: ignore[arg-type]
+        _thread=__import__("threading").Thread(target=lambda: None),
+        _tunnel=None,
+    )
+
+    def fake_start(**kwargs):  # noqa: ANN003
+        return fake
+
+    monkeypatch.setattr(
+        "daytona_gym.telemetry.dashboard.start_dashboard",
+        fake_start,
+    )
+
+    run = TrainingRun(
+        run_id="run_abc",
+        telemetry_path=str(telemetry),
+        command=["echo"],
+        env={},
+        runtime_env={"env_vars": {}},
+        dry_run=False,
+        returncode=0,
+    )
+    url = run.open(share=True)
+    assert url == "https://example.trycloudflare.com/run/run_abc"
+    assert run.dashboard_url == url
+    assert "trycloudflare.com/run/run_abc" in run.inspect_hint
+    run.close_dashboard()
+
+
+def test_launch_open_false_skips_dashboard(tmp_path: Path, monkeypatch) -> None:
+    cfg = _config_modal(tmp_path)
+    # create minimal paths so validate passes, then stub execute_plan
+    for sub in ("slime", "Megatron-LM", "hf", "ref", "repo"):
+        (tmp_path / sub).mkdir(exist_ok=True)
+    (tmp_path / "slime" / "train.py").write_text("#\n")
+
+    from daytona_gym.gym import run as run_mod
+
+    def fake_execute(plan, **kwargs):  # noqa: ANN003
+        return run_mod.TrainingRun(
+            run_id=plan.run_id,
+            telemetry_path=str(plan.telemetry_path),
+            command=["ray", "job", "submit"],
+            env={},
+            runtime_env={"env_vars": {}},
+            dry_run=False,
+            returncode=0,
+        )
+
+    monkeypatch.setattr("daytona_gym.gym.config.execute_plan", fake_execute)
+    opened = {"n": 0}
+
+    def boom(*a, **k):  # noqa: ANN001
+        opened["n"] += 1
+        raise AssertionError("open should not be called")
+
+    monkeypatch.setattr(run_mod.TrainingRun, "open", boom)
+    run = cfg.launch(dry_run=False, open=False, skip_preflight=True)
+    assert run.returncode == 0
+    assert opened["n"] == 0
+    assert run.dashboard_url is None

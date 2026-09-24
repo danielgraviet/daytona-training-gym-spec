@@ -14,7 +14,9 @@ import html
 import json
 import os
 import sys
+import threading
 import webbrowser
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -27,23 +29,57 @@ from daytona_gym.telemetry.dashboard_sync import (
 from daytona_gym.telemetry.dashboard_tunnel import QuickTunnel
 
 
-def serve(
+@dataclass
+class DashboardHandle:
+    """Background dashboard server (+ optional public tunnel)."""
+
+    url: str
+    local_url: str
+    runs_dir: Path
+    shared: bool
+    _httpd: ThreadingHTTPServer = field(repr=False)
+    _thread: threading.Thread = field(repr=False)
+    _tunnel: QuickTunnel | None = field(default=None, repr=False)
+
+    def stop(self) -> None:
+        if self._tunnel is not None:
+            self._tunnel.stop()
+            self._tunnel = None
+        try:
+            self._httpd.shutdown()
+        except Exception:
+            pass
+        try:
+            self._httpd.server_close()
+        except Exception:
+            pass
+        if self._thread.is_alive() or self._thread.ident is not None:
+            try:
+                self._thread.join(timeout=5)
+            except RuntimeError:
+                pass
+
+
+def start_dashboard(
     *,
     runs_dir: Path,
     host: str = "127.0.0.1",
     port: int = 8765,
-    open_browser: bool = True,
+    open_browser: bool = False,
     share: bool | None = None,
-) -> None:
+    quiet: bool = False,
+) -> DashboardHandle:
+    """Start the dashboard in a background thread; return a live URL handle."""
     runs_dir = Path(runs_dir).resolve()
     runs_dir.mkdir(parents=True, exist_ok=True)
     context = detect_serve_context()
-    # Remote GPU boxes: share by default so the laptop gets a live URL.
     if share is None:
         share = context.kind in {"runpod", "ssh"}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
+            if quiet:
+                return
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
         def do_GET(self) -> None:  # noqa: N802
@@ -69,14 +105,22 @@ def serve(
             self.wfile.write(payload)
 
     bind_host = "127.0.0.1" if share else host
-    httpd = ThreadingHTTPServer((bind_host, port), Handler)
-    local_url = f"http://127.0.0.1:{port}/"
-    print(f"Daytona Gym dashboard  {local_url}")
-    print(f"runs dir: {runs_dir}")
+    try:
+        httpd = ThreadingHTTPServer((bind_host, port), Handler)
+    except OSError:
+        # Port busy (e.g. prior dg dash) — pick an ephemeral port.
+        httpd = ThreadingHTTPServer((bind_host, 0), Handler)
+    bound_port = httpd.server_address[1]
+    local_url = f"http://127.0.0.1:{bound_port}/"
+    if not quiet:
+        print(f"Daytona Gym dashboard  {local_url}")
+        print(f"runs dir: {runs_dir}")
 
     tunnel: QuickTunnel | None = None
+    public_url: str | None = None
     if share:
-        print("starting public tunnel (outbound; no RunPod port edits) …")
+        if not quiet:
+            print("starting public tunnel (outbound; no RunPod port edits) …")
         tunnel = QuickTunnel(local_url.rstrip("/"))
         try:
             public_url = tunnel.start()
@@ -89,30 +133,61 @@ def serve(
             )
             tunnel = None
             public_url = None
-        if public_url:
+        if public_url and not quiet:
             print()
             print("Open on your laptop (live):")
             print(f"  {public_url}")
             print("  (public while this process runs — treat traces as sensitive)")
             print()
-    else:
-        _print_access_hints(context, host=bind_host, port=port)
+    elif not quiet:
+        _print_access_hints(context, host=bind_host, port=bound_port)
 
-    print("Ctrl+C to stop")
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+
+    url = (public_url or local_url).rstrip("/") + "/"
     should_open = open_browser and context.kind == "local" and not share
     if should_open:
         try:
-            webbrowser.open(local_url)
+            webbrowser.open(url)
         except Exception:
             pass
+
+    return DashboardHandle(
+        url=url,
+        local_url=local_url,
+        runs_dir=runs_dir,
+        shared=bool(public_url),
+        _httpd=httpd,
+        _thread=thread,
+        _tunnel=tunnel,
+    )
+
+
+def serve(
+    *,
+    runs_dir: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = True,
+    share: bool | None = None,
+) -> None:
+    handle = start_dashboard(
+        runs_dir=runs_dir,
+        host=host,
+        port=port,
+        open_browser=open_browser,
+        share=share,
+        quiet=False,
+    )
+    print("Ctrl+C to stop")
     try:
-        httpd.serve_forever()
+        while handle._thread.is_alive():
+            handle._thread.join(timeout=0.5)
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
-        if tunnel is not None:
-            tunnel.stop()
-        httpd.server_close()
+        handle.stop()
 
 
 class ServeContext:

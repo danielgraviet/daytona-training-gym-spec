@@ -21,13 +21,14 @@ Prerequisites: fresh pod from ``slimerl/slime:latest`` + Daytona API key.
     --hf-checkpoint /root/Qwen2.5-3B-Instruct \\
     --save /root/Qwen2.5-3B-Instruct_torch_dist
 
-  # 4) dry-run / launch
+  # 4) dry-run / launch (launch auto-opens live dashboard URL; Ctrl+C when done)
   cd /root/daytona-training-gym-spec
   python examples/gym_sdk/runpod_dogfood.py
   python examples/gym_sdk/runpod_dogfood.py --launch
 
-  # 5) inspect
+  # 5) or inspect later
   dg stats runs/<run_id>.jsonl
+  dg dash
 """
 
 from __future__ import annotations
@@ -65,6 +66,8 @@ def print_run(run: TrainingRun) -> None:
     print(f"dry_run={run.dry_run}")
     print(f"returncode={run.returncode}")
     print(f"inspect: {run.inspect_hint}")
+    if run.dashboard_url:
+        print(f"dashboard: {run.dashboard_url}")
     env_vars = run.runtime_env.get("env_vars", {})
     print("runtime_env keys:", sorted(env_vars.keys()))
     if "DAYTONA_API_KEY" in env_vars:
@@ -85,6 +88,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip Daytona sandbox preflight (debug only)",
     )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Do not auto-start the live dashboard after launch",
+    )
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Exit immediately after launch (dashboard would stop with the process)",
+    )
     args = parser.parse_args(argv)
 
     config = build_config()
@@ -92,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         run = config.launch(
             dry_run=not args.launch,
             skip_preflight=args.skip_preflight,
+            open=False if args.no_open or not args.launch else True,
         )
     except DaytonaError as exc:
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
@@ -101,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
     if run.dry_run:
         print("\nRe-run with --launch when ready on the GPU box.")
         return 0
+    # Keep process alive so the tunnel stays up (unless --no-wait).
+    if run.dashboard_url and not args.no_wait:
+        run.wait_dashboard()
     return int(run.returncode or 0)
 
 

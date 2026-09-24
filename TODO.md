@@ -33,12 +33,13 @@ python examples/gym_sdk/quickstart.py
 
 ---
 
-## Next
+### Next
 
-1. **Dogfood `launch()` on H100 or 3090** — replace bash entry with quickstart `--launch`; note FRICTION.
-2. Then pick: Harbor-as-backend under recipes, or polish dashboard (live refresh / hosted URL).
+1. ~~Dogfood `launch()` on H100~~ — **done** (Gym SDK on RunPod).
+2. ~~Wire `TrainingRun` → live dash URL~~ — **done** (`launch(open=True)` / `run.open()`).
+3. BYO worker story (launch from laptop without living in SSH), or Harbor-as-backend.
 
-Parked: `dg harbor` CLI wrapper; remote SSH worker agent; PyPI until API stabilizes.
+Parked: `dg harbor` CLI wrapper; PyPI until API stabilizes.
 
 ---
 
@@ -46,9 +47,10 @@ Parked: `dg harbor` CLI wrapper; remote SSH worker agent; PyPI until API stabili
 
 ### P1
 
-- [ ] Real `TrainConfig.launch()` on BYO GPU (parity with `run_on_slime_pod.sh`)
+- [x] Real `TrainConfig.launch()` on BYO GPU (parity with dogfood; RunPod verified)
 - [x] Local dashboard v0 (`dg dash` / `dg open` — reward / wall / rollout timeline)
-- [ ] Hosted / shared dashboard URL (optional)
+- [x] `TrainingRun.open()` / `launch(open=True)` → live tunnel URL
+- [ ] Hosted Daytona dashboard URL (drop Cloudflare dependency)
 - [ ] Remote BYO worker registration
 
 ### P1b — Harbor backend (when chosen)
