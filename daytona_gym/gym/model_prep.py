@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from daytona_gym.gym.models import SoftSlimeModel
@@ -39,12 +40,20 @@ def _looks_like_torch_dist(path: Path) -> bool:
     return True
 
 
-def ensure_model_ready(model: SoftSlimeModel) -> None:
+def ensure_model_ready(
+    model: SoftSlimeModel,
+    *,
+    on_phase: Callable[[str, str], None] | None = None,
+) -> None:
     """If HF / torch_dist dirs are missing, download + convert (uses ``HF_TOKEN``).
 
     No-ops unless this looks like a real Slime GPU box (convert script present),
     so CPU unit tests with stub paths still get a clean ``missing paths`` error.
     """
+    def note(phase: str, message: str) -> None:
+        if on_phase is not None:
+            on_phase(phase, message)
+
     hf_dir = Path(os.environ.get("HF_CHECKPOINT", model.hf_checkpoint)).expanduser()
     ref_dir = Path(os.environ.get("REF_LOAD", model.ref_load)).expanduser()
     slime = Path(os.environ.get("SLIME_ROOT", model.slime_root)).expanduser()
@@ -57,9 +66,13 @@ def ensure_model_ready(model: SoftSlimeModel) -> None:
         return
 
     if not _looks_like_hf_checkpoint(hf_dir):
+        note("model_download", f"Downloading {repo}…")
         _download_hf(repo=repo, dest=hf_dir)
+    else:
+        note("model_download", f"HF checkpoint ready at {hf_dir}")
 
     if not _looks_like_torch_dist(ref_dir):
+        note("model_convert", f"Converting HF → torch_dist at {ref_dir}…")
         _convert_torch_dist(
             slime_root=slime,
             megatron_root=megatron,
@@ -67,6 +80,8 @@ def ensure_model_ready(model: SoftSlimeModel) -> None:
             hf_checkpoint=hf_dir,
             save_dir=ref_dir,
         )
+    else:
+        note("model_convert", f"torch_dist ready at {ref_dir}")
 
 
 def _download_hf(*, repo: str, dest: Path) -> None:

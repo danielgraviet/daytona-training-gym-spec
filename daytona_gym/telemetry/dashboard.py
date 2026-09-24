@@ -22,6 +22,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from daytona_gym.telemetry import dashboard_data as data
+from daytona_gym.telemetry import progress as run_progress
 from daytona_gym.telemetry.dashboard_sync import (
     resolve_remote_target,
     sync_runs_from_ssh,
@@ -360,12 +361,18 @@ def _fmt_secs(value: object) -> str:
     return f"{v:.1f}s"
 
 
-def _layout(title: str, body: str) -> str:
+def _layout(title: str, body: str, *, refresh_seconds: int | None = None) -> str:
+    refresh = (
+        f'<meta http-equiv="refresh" content="{int(refresh_seconds)}"/>'
+        if refresh_seconds
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  {refresh}
   <title>{_esc(title)}</title>
   <style>
     :root {{
@@ -436,6 +443,22 @@ def _layout(title: str, body: str) -> str:
     .b-sbx {{ background: #0b6e4f; }}
     .b-env {{ background: #a67c00; }}
     .b-oth {{ background: #7a7a7a; }}
+    .phases {{ list-style: none; padding: 0; margin: 1rem 0; }}
+    .phases li {{
+      padding: 0.55rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      margin: 0.35rem 0;
+      background: var(--card);
+    }}
+    .phases li.active {{ border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }}
+    .phases li.done {{ color: var(--muted); }}
+    .phases .tag {{
+      font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+      font-size: 0.75rem;
+      color: var(--accent);
+      margin-right: 0.5rem;
+    }}
     pre.preview {{
       margin: 0.2rem 0 0.6rem 1rem;
       white-space: pre-wrap;
@@ -460,13 +483,28 @@ def _layout(title: str, body: str) -> str:
 
 def _page_index(runs_dir: Path) -> str:
     runs = data.list_run_files(runs_dir)
-    if not runs:
+    progress_only = [
+        stem
+        for stem in run_progress.list_progress_stems(runs_dir)
+        if not (runs_dir / f"{stem}.jsonl").is_file()
+    ]
+    if not runs and not progress_only:
         body = (
             f'<p class="empty">No <code>*.jsonl</code> files in '
             f"<code>{_esc(runs_dir)}</code>. Run a dogfood job first.</p>"
         )
         return _layout("Runs", body)
     rows = []
+    for stem in progress_only:
+        prog = run_progress.read_progress(runs_dir, stem) or {}
+        rows.append(
+            "<tr>"
+            f"<td><a href='/run/{_esc(stem)}'>{_esc(stem)}</a></td>"
+            "<td>0</td>"
+            f"<td class='ok'>starting · {_esc(prog.get('phase') or '…')}</td>"
+            "<td>-</td><td>-</td>"
+            "</tr>"
+        )
     for run in runs:
         if run.get("error"):
             rows.append(
@@ -498,18 +536,75 @@ def _page_index(runs_dir: Path) -> str:
       </tbody>
     </table>
     """
-    return _layout("Runs", body)
+    return _layout("Runs", body, refresh_seconds=5 if progress_only else None)
+
+
+_PHASE_STEPS = (
+    ("starting", "Run created"),
+    ("model_download", "Download model weights"),
+    ("model_convert", "Convert HF → Megatron"),
+    ("ray_start", "Start Ray / Slime"),
+    ("training", "Training — waiting for first rollout"),
+    ("live", "Rollouts live"),
+)
+
+
+def _page_run_pending(runs_dir: Path, stem: str) -> str:
+    prog = run_progress.read_progress(runs_dir, stem) or {}
+    phase = str(prog.get("phase") or "starting")
+    message = str(prog.get("message") or "Worker is starting…")
+    items = []
+    seen_active = False
+    for key, label in _PHASE_STEPS:
+        if key == "live":
+            cls = ""
+        elif key == phase:
+            cls = "active"
+            seen_active = True
+        elif not seen_active:
+            cls = "done"
+        else:
+            cls = ""
+        tag = "now" if cls == "active" else ("ok" if cls == "done" else "")
+        items.append(
+            f'<li class="{cls}">'
+            + (f'<span class="tag">{tag}</span>' if tag else "")
+            + f"{_esc(label)}</li>"
+        )
+    body = f"""
+    <nav class="crumb"><a href="/">runs</a> / {_esc(stem)}</nav>
+    <div class="meta">
+      <span>status <strong>starting</strong></span>
+      <span>{_esc(message)}</span>
+    </div>
+    <p>This page refreshes every few seconds. Rollout timelines (prefill, decode,
+    sandbox tools) appear once training emits telemetry.</p>
+    <ul class="phases">{"".join(items)}</ul>
+    """
+    return _layout(f"{stem} (starting)", body, refresh_seconds=3)
 
 
 def _page_run(runs_dir: Path, stem: str) -> str:
-    detail = data.run_detail(_resolve_run(runs_dir, stem))
+    try:
+        path_file = _resolve_run(runs_dir, stem)
+    except FileNotFoundError:
+        return _page_run_pending(runs_dir, stem)
+
+    detail = data.run_detail(path_file)
+    rollouts = detail.get("rollouts") or []
+    if not rollouts:
+        # JSONL exists but empty / no rollouts yet — still show progress.
+        pending = _page_run_pending(runs_dir, stem)
+        # Prefer pending UI with a note that the file is warming up.
+        return pending
+
     summary = detail.get("summary") or {}
     mean = summary.get("mean_reward")
     mean_s = f"{mean:.3f}" if isinstance(mean, float) else "-"
     statuses = summary.get("statuses") or {}
     status_s = " ".join(f"{k}={v}" for k, v in sorted(statuses.items()))
     rows = []
-    for r in detail.get("rollouts") or []:
+    for r in rollouts:
         status = str(r.get("status") or "?")
         cls = "ok" if status == "completed" else ("bad" if status in {"failed", "aborted"} else "")
         reward = r.get("reward")
@@ -533,13 +628,13 @@ def _page_run(runs_dir: Path, stem: str) -> str:
     <div class="meta">
       <span>status <strong>{_esc(status_s)}</strong></span>
       <span>mean reward <strong>{_esc(mean_s)}</strong></span>
-      <span>n <strong>{len(detail.get('rollouts') or [])}</strong></span>
+      <span>n <strong>{len(rollouts)}</strong></span>
     </div>
     <table>
       <thead><tr>
         <th>rollout</th><th>status</th><th>reward</th><th>wall</th><th>tools</th>
       </tr></thead>
-      <tbody>{''.join(rows) or '<tr><td colspan="5" class="empty">no rollouts</td></tr>'}</tbody>
+      <tbody>{''.join(rows)}</tbody>
     </table>
     """
     return _layout(detail["name"], body)

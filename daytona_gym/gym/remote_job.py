@@ -190,25 +190,28 @@ def _spawn_detached(job_json: Path, payload: dict) -> int:
 
 
 def _run_supervised(payload: dict) -> int:
-    """Child: dash first → status file → train → keep dash alive."""
+    """Child: dash ASAP → progress updates → model prep → train → keep dash."""
     status_path = Path(os.environ[_STATUS_ENV])
     config = load_config(payload)
     try:
-        # Apply forwarded laptop secrets (HF_TOKEN, …) before model prep.
         for key, val in (payload.get("forward_env") or {}).items():
             if isinstance(key, str) and isinstance(val, str) and val:
                 os.environ.setdefault(key, val)
 
-        if config.model is not None:
-            from daytona_gym.gym.model_prep import ensure_model_ready
-
-            ensure_model_ready(config.model)
-
-        config.validate(require_existing_paths=True)
         from daytona_gym.gym.launch import build_plan, execute_plan
-
-        plan = build_plan(config)
         from daytona_gym.gym.run import TrainingRun
+        from daytona_gym.telemetry.progress import write_progress
+
+        # Build plan without requiring model paths yet — open dash early.
+        plan = build_plan(config)
+        runs_dir = plan.telemetry_path.parent
+        stem = plan.run_id
+
+        def set_phase(phase: str, message: str) -> None:
+            write_progress(runs_dir, stem, phase=phase, message=message)
+            print(f"progress: [{phase}] {message}", flush=True)
+
+        set_phase("starting", "Run created — opening dashboard")
 
         run = TrainingRun(
             run_id=plan.run_id,
@@ -229,7 +232,7 @@ def _run_supervised(payload: dict) -> int:
             )
             print(flush=True)
             print("=" * 60, flush=True)
-            print("  → OPEN  (training starting)", flush=True)
+            print("  → OPEN  (startup in progress)", flush=True)
             print(f"  {dashboard}", flush=True)
             print("=" * 60, flush=True)
             print(flush=True)
@@ -243,7 +246,6 @@ def _run_supervised(payload: dict) -> int:
                 "pid": os.getpid(),
             },
         )
-        # Also print markers into the detach log for humans.
         _print_markers(
             run_id=run.training_run_id,
             telemetry=run.telemetry_path,
@@ -252,6 +254,14 @@ def _run_supervised(payload: dict) -> int:
             detached=True,
         )
 
+        if config.model is not None:
+            from daytona_gym.gym.model_prep import ensure_model_ready
+
+            ensure_model_ready(config.model, on_phase=set_phase)
+
+        config.validate(require_existing_paths=True)
+        set_phase("ray_start", "Starting Ray / Slime training job")
+
         finished = execute_plan(
             plan,
             skip_preflight=bool(payload.get("skip_preflight", False)),
@@ -259,6 +269,7 @@ def _run_supervised(payload: dict) -> int:
                 payload.get("preflight_timeout_seconds", 90)
             ),
         )
+        set_phase("training", "Training running — waiting for rollouts in JSONL")
         run.returncode = finished.returncode
         run.command = finished.command
         _print_markers(
@@ -272,9 +283,21 @@ def _run_supervised(payload: dict) -> int:
             run.wait_dashboard()
         return int(run.returncode or 0)
     except DaytonaError as exc:
+        try:
+            if "stem" in locals() and "runs_dir" in locals():
+                from daytona_gym.telemetry.progress import write_progress as _wp
+
+                _wp(
+                    runs_dir,
+                    stem,
+                    phase="failed",
+                    message=f"[{exc.code}] {exc.message}",
+                )
+        except Exception:  # noqa: BLE001
+            pass
         _write_status(
             status_path,
-            {"error": f"[{exc.code}] {exc.message}", "run_id": "failed"},
+            {"error": f"[{exc.code}] {exc.message}", "run_id": locals().get("stem", "failed")},
         )
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
         print("__DG_RETURNCODE__=2", flush=True)

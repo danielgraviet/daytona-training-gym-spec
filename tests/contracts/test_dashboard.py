@@ -111,7 +111,52 @@ async def test_dashboard_http_pages(tmp_path: Path) -> None:
         httpd.server_close()
 
 
-async def test_export_static_html(tmp_path: Path) -> None:
+async def test_dashboard_pending_run_page(tmp_path: Path) -> None:
+    from daytona_gym.telemetry.progress import write_progress
+
+    write_progress(
+        tmp_path,
+        "run_pending_1",
+        phase="model_download",
+        message="Downloading weights…",
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args: object) -> None:
+            return
+
+        def do_GET(self) -> None:  # noqa: N802
+            body, content_type = dash_mod._route(unquote(urlparse(self.path).path), tmp_path)
+            payload = body.encode("utf-8") if isinstance(body, str) else body
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    port = httpd.server_address[1]
+    try:
+        time.sleep(0.05)
+        conn = HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/run/run_pending_1")
+        res = conn.getresponse()
+        body = res.read().decode()
+        assert res.status == 200
+        assert "Download model weights" in body
+        assert "refresh" in body
+        assert "404" not in body
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        index = res.read().decode()
+        assert "run_pending_1" in index
+        assert "starting" in index
+        conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
     path = tmp_path / "dogfood.jsonl"
     await _write_jsonl(path, n=1)
     out = tmp_path / "dashboard.html"
