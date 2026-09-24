@@ -110,3 +110,12 @@ def test_ssh_worker_parses_markers(tmp_path: Path, monkeypatch) -> None:
     assert run.run_id == "run_remote_1"
     assert run.dashboard_url == "https://x.trycloudflare.com/run/run_remote_1"
     assert run.returncode == 0
+
+
+def test_ssh_worker_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("DAYTONA_GYM_SSH", "root@1.2.3.4")
+    monkeypatch.setenv("DAYTONA_GYM_SSH_PORT", "2222")
+    monkeypatch.setenv("DAYTONA_GYM_SSH_IDENTITY", "~/.ssh/id_ed25519")
+    w = SshWorker.from_env()
+    assert w.host == "root@1.2.3.4"
+    assert w.port == 2222
