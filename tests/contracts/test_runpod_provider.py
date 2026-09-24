@@ -63,7 +63,9 @@ def test_resolve_uses_http(monkeypatch) -> None:
 
     def fake_urlopen(req, timeout=0):  # noqa: ANN001
         assert "pods/pod1" in req.full_url
-        assert req.headers.get("Authorization") == "Bearer secret"
+        headers = {k.lower(): v for k, v in req.header_items()}
+        assert headers.get("authorization") == "Bearer secret"
+        assert headers.get("user-agent", "").startswith("daytona-gym/")
         return FakeResp()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)

@@ -139,11 +139,13 @@ def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshIn
 
 def _get_pod(pod_id: str, *, api_key: str) -> dict[str, Any]:
     url = f"{_API}/pods/{pod_id}"
+    # Cloudflare Error 1010 blocks Python urllib when User-Agent is missing.
     req = urllib.request.Request(
         url,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
+            "User-Agent": "daytona-gym/0.1 (+https://github.com/danielgraviet/daytona-training-gym-spec)",
         },
         method="GET",
     )
@@ -152,9 +154,16 @@ def _get_pod(pod_id: str, *, api_key: str) -> dict[str, Any]:
             body = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
+        hint = ""
+        if exc.code == 403 and "1010" in detail:
+            hint = (
+                " (Cloudflare blocked the client — upgrade daytona-gym / ensure "
+                "User-Agent is sent; or pass --host root@IP --ssh-port PORT from "
+                "RunPod Connect → SSH over exposed TCP)"
+            )
         raise DaytonaError(
             ErrorCode.PLATFORM_ERROR,
-            f"RunPod GET /pods/{pod_id} failed: HTTP {exc.code} {detail}",
+            f"RunPod GET /pods/{pod_id} failed: HTTP {exc.code} {detail}{hint}",
         ) from exc
     except urllib.error.URLError as exc:
         raise DaytonaError(
