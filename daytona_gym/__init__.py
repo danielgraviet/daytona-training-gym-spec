@@ -14,6 +14,7 @@ from daytona_gym.gym import (
     TrainConfig,
     TrainingRun,
 )
+from daytona_gym.gym.providers.runpod import runpod_worker
 from daytona_gym.runtime.daytona import DaytonaEnvironmentRuntime
 from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
@@ -51,5 +52,6 @@ __all__ = [
     "ToolResult",
     "TrainConfig",
     "TrainingRun",
+    "runpod_worker",
     "__version__",
 ]

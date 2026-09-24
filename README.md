@@ -88,8 +88,10 @@ Example (aspirational):
   - On a laptop with local traces: `dg dash` opens the browser on localhost.
 - Remote BYO worker: ``SshWorker`` — ``TrainConfig(...).launch(worker=SshWorker(...))``
   from a laptop over direct TCP SSH. See ``examples/gym_sdk/remote_from_laptop.py``.
-  (``ssh.runpod.io`` gateway is not supported for SCP; use Connect → SSH IP/port.)
-- Outbound worker agent / provider sugar (auto-create RunPod) — **not shipped**.
+  - **RunPod:** ``runpod_worker(pod_id)`` (or ``RUNPOD_POD_ID`` + ``RUNPOD_API_KEY``)
+    resolves public IP + SSH port via the [RunPod API](https://docs.runpod.io/api-reference/pods/GET/pods/podId) —
+    no hand-copy from the Connect tab. Pod must expose ``22/tcp`` (direct SSH).
+  - Homelab: pass ``--host root@ip --ssh-port 22`` (or any OpenSSH box).
 
 ## Core architecture
 
