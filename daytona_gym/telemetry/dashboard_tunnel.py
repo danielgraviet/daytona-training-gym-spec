@@ -2,6 +2,9 @@
 
 Uses Cloudflare Quick Tunnels (``cloudflared tunnel --url …``) so a GPU box
 can dial out and print an HTTPS link openable on a laptop.
+
+Quick-tunnel hostnames are **ephemeral**: when ``cloudflared`` exits, DNS for
+``*.trycloudflare.com`` goes away (browser shows DNS_PROBE / NXDOMAIN).
 """
 
 from __future__ import annotations
@@ -97,6 +100,13 @@ class QuickTunnel:
         self.local_url = local_url
         self.public_url: str | None = None
         self._proc: subprocess.Popen[str] | None = None
+        self._log_path = cache_dir() / f"cloudflared_{os.getpid()}.log"
+        self._watch_stop = threading.Event()
+        self._watch_thread: threading.Thread | None = None
+
+    @property
+    def alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
 
     def start(self, *, timeout: float = 45.0) -> str:
         binary = ensure_cloudflared_binary()
@@ -107,49 +117,96 @@ class QuickTunnel:
             "--url",
             self.local_url,
         ]
+        log_f = self._log_path.open("w", encoding="utf-8")
+        # Own process group so a Ray/training SIGTERM to the gym process group
+        # is less likely to instantly reap cloudflared (we still stop() on purpose).
         self._proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdout=log_f,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
-        assert self._proc.stdout is not None
+        log_f.close()
         deadline = time.time() + timeout
-        lines: list[str] = []
-
-        def _reader() -> None:
-            assert self._proc is not None and self._proc.stdout is not None
-            for line in self._proc.stdout:
-                lines.append(line)
-                match = _URL_RE.search(line)
-                if match and self.public_url is None:
-                    self.public_url = match.group(0)
-
-        thread = threading.Thread(target=_reader, daemon=True)
-        thread.start()
         while time.time() < deadline:
-            if self.public_url:
-                return self.public_url
             if self._proc.poll() is not None:
                 break
+            text = ""
+            try:
+                text = self._log_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+            match = _URL_RE.search(text)
+            if match:
+                self.public_url = match.group(0)
+                # Confirm it stays up briefly (flaky free tunnels sometimes die ASAP).
+                time.sleep(1.5)
+                if self._proc.poll() is not None:
+                    snippet = text[-500:].strip() or "(no cloudflared output)"
+                    self.stop()
+                    raise RuntimeError(
+                        "cloudflared published a URL then exited immediately.\n"
+                        f"{snippet}\nlog={self._log_path}"
+                    )
+                self._start_watchdog()
+                return self.public_url
             time.sleep(0.1)
-        snippet = "".join(lines[-20:]).strip() or "(no cloudflared output)"
+
+        snippet = ""
+        try:
+            snippet = self._log_path.read_text(encoding="utf-8", errors="replace")[
+                -500:
+            ].strip()
+        except OSError:
+            pass
         self.stop()
         raise RuntimeError(
             "cloudflared did not publish a trycloudflare.com URL in time.\n"
-            f"{snippet}"
+            f"{snippet or '(no cloudflared output)'}\nlog={self._log_path}"
         )
 
+    def _start_watchdog(self) -> None:
+        self._watch_stop.clear()
+
+        def _watch() -> None:
+            while not self._watch_stop.wait(5.0):
+                if self._proc is not None and self._proc.poll() is not None:
+                    code = self._proc.returncode
+                    print(
+                        f"cloudflared exited (code={code}) — "
+                        "public URL is dead (DNS will fail). "
+                        f"See {self._log_path}. Re-run launch for a new link.",
+                        flush=True,
+                    )
+                    return
+
+        self._watch_thread = threading.Thread(target=_watch, daemon=True)
+        self._watch_thread.start()
+
     def stop(self) -> None:
+        self._watch_stop.set()
         if self._proc is None:
             return
         if self._proc.poll() is None:
-            self._proc.terminate()
+            try:
+                os.killpg(self._proc.pid, 15)  # SIGTERM process group
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    self._proc.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 self._proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self._proc.kill()
+                try:
+                    os.killpg(self._proc.pid, 9)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        self._proc.kill()
+                    except Exception:  # noqa: BLE001
+                        pass
         self._proc = None
 
 
