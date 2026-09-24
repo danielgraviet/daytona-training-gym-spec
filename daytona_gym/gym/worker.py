@@ -92,6 +92,8 @@ class SshWorker:
     identity: str | Path | None = None
     remote_repo: str = "/root/daytona-training-gym-spec"
     pull: bool = True
+    # Clone if the worker disk was wiped (RunPod stop/start often clears /root).
+    git_url: str = "https://github.com/danielgraviet/daytona-training-gym-spec.git"
     extra_ssh_args: list[str] = field(default_factory=list)
     name: str = "ssh"
     transport: Transport = "auto"
@@ -112,6 +114,10 @@ class SshWorker:
             identity=os.environ.get("DAYTONA_GYM_SSH_IDENTITY"),
             remote_repo=os.environ.get(
                 "DAYTONA_GYM_REMOTE_REPO", "/root/daytona-training-gym-spec"
+            ),
+            git_url=os.environ.get(
+                "DAYTONA_GYM_GIT_URL",
+                "https://github.com/danielgraviet/daytona-training-gym-spec.git",
             ),
         )
 
@@ -152,6 +158,22 @@ class SshWorker:
         if is_runpod_proxy_host(self.host):
             return "shell"
         return "exec"
+
+    def _ensure_remote_repo_cmd(self) -> str:
+        """Clone + editable install when the worker wiped ``/root`` (common on RunPod restart)."""
+        repo = shlex.quote(self.remote_repo)
+        url = shlex.quote(
+            self.git_url
+            or os.environ.get(
+                "DAYTONA_GYM_GIT_URL",
+                "https://github.com/danielgraviet/daytona-training-gym-spec.git",
+            )
+        )
+        return (
+            f"if [ ! -f {repo}/pyproject.toml ]; then "
+            f"git clone --depth 1 {url} {repo} && pip install -e {repo}; "
+            f"fi"
+        )
 
     def _ssh_base(self, *, force_tty: bool = False) -> list[str]:
         cmd = [
@@ -236,6 +258,7 @@ class SshWorker:
                 raise DaytonaError(ErrorCode.PLATFORM_ERROR, hint)
 
             remote_bits = [
+                self._ensure_remote_repo_cmd(),
                 f"cd {shlex.quote(self.remote_repo)}",
             ]
             if self.pull:
@@ -361,7 +384,8 @@ class SshWorker:
                 )
 
                 launch = (
-                    f"cd {shlex.quote(self.remote_repo)}"
+                    self._ensure_remote_repo_cmd()
+                    + f" && cd {shlex.quote(self.remote_repo)}"
                     + (" && (git pull --ff-only || true)" if self.pull else "")
                     + " && export DAYTONA_API_KEY="
                     + shlex.quote(api_key)

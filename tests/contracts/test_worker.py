@@ -161,6 +161,17 @@ def test_ssh_worker_parses_detached_markers(tmp_path: Path, monkeypatch) -> None
     assert run.returncode is None
     assert run.run_id == "run_det_1"
     assert run.dashboard_url == "https://x.trycloudflare.com/run/run_det_1"
+
+
+def test_ensure_remote_repo_cmd_clones_when_missing() -> None:
+    w = SshWorker(host="u@h", remote_repo="/root/daytona-training-gym-spec", pull=True)
+    cmd = w._ensure_remote_repo_cmd()
+    assert "git clone" in cmd
+    assert "pip install -e" in cmd
+    assert "/root/daytona-training-gym-spec" in cmd
+
+
+def test_ssh_worker_from_env(monkeypatch) -> None:
     monkeypatch.setenv("DAYTONA_GYM_SSH", "root@1.2.3.4")
     monkeypatch.setenv("DAYTONA_GYM_SSH_PORT", "2222")
     monkeypatch.setenv("DAYTONA_GYM_SSH_IDENTITY", "~/.ssh/id_ed25519")

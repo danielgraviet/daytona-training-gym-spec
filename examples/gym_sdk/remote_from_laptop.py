@@ -35,6 +35,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from daytona_gym.envfile import load_dotenv
+
+load_dotenv()  # pick up repo .env (RUNPOD_*, DAYTONA_*, …) if not already exported
+
 from daytona_gym import (
     PromptJsonlDataset,
     Qwen25_3B,

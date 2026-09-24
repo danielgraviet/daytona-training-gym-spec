@@ -126,14 +126,23 @@ def runpod_worker(
     pull: bool = True,
     user: str = "root",
     prefer: Literal["proxy", "direct", "auto"] = "proxy",
+    git_url: str | None = None,
 ) -> SshWorker:
     """Laptop agent default: proxy SSH + PTY shell (works without container sshd)."""
-    return resolve_runpod_ssh(pod_id, api_key=api_key, user=user).to_worker(
+    from daytona_gym.envfile import load_dotenv
+
+    load_dotenv()
+    w = resolve_runpod_ssh(pod_id, api_key=api_key, user=user).to_worker(
         identity=identity,
         remote_repo=remote_repo,
         pull=pull,
         prefer=prefer,
     )
+    if git_url:
+        w.git_url = git_url
+    elif os.environ.get("DAYTONA_GYM_GIT_URL"):
+        w.git_url = os.environ["DAYTONA_GYM_GIT_URL"]
+    return w
 
 
 def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshInfo:
