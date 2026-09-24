@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -90,6 +91,16 @@ def start_dashboard(
                 self.send_response(204)
                 self.end_headers()
                 return
+            # SSE: keep one connection open; server pushes progress (no page reload).
+            parts = [p for p in path.split("/") if p]
+            if (
+                len(parts) == 4
+                and parts[0] == "api"
+                and parts[1] == "runs"
+                and parts[3] == "events"
+            ):
+                self._stream_run_events(parts[2])
+                return
             try:
                 body, content_type = _route(path, runs_dir)
             except FileNotFoundError as exc:
@@ -102,8 +113,35 @@ def start_dashboard(
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(payload)
+
+        def _stream_run_events(self, stem: str) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            last = ""
+            try:
+                while True:
+                    snap = _run_live_snapshot(runs_dir, stem)
+                    payload = json.dumps(snap, separators=(",", ":"))
+                    if payload != last:
+                        self.wfile.write(
+                            f"event: progress\ndata: {payload}\n\n".encode("utf-8")
+                        )
+                        self.wfile.flush()
+                        last = payload
+                    if snap.get("ready"):
+                        self.wfile.write(b"event: ready\ndata: {}\n\n")
+                        self.wfile.flush()
+                        break
+                    time.sleep(2.0)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
 
     bind_host = "127.0.0.1" if share else host
     try:
@@ -361,18 +399,13 @@ def _fmt_secs(value: object) -> str:
     return f"{v:.1f}s"
 
 
-def _layout(title: str, body: str, *, refresh_seconds: int | None = None) -> str:
-    refresh = (
-        f'<meta http-equiv="refresh" content="{int(refresh_seconds)}"/>'
-        if refresh_seconds
-        else ""
-    )
+def _layout(title: str, body: str, *, extra_head: str = "") -> str:
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  {refresh}
+  {extra_head}
   <title>{_esc(title)}</title>
   <style>
     :root {{
@@ -536,7 +569,38 @@ def _page_index(runs_dir: Path) -> str:
       </tbody>
     </table>
     """
-    return _layout("Runs", body, refresh_seconds=5 if progress_only else None)
+    return _layout("Runs", body)
+
+
+def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
+    prog = run_progress.read_progress(runs_dir, stem) or {}
+    n_rollouts = 0
+    ready = False
+    try:
+        path_file = _resolve_run(runs_dir, stem)
+        detail = data.run_detail(path_file)
+        n_rollouts = len(detail.get("rollouts") or [])
+        ready = n_rollouts > 0
+    except FileNotFoundError:
+        pass
+    phase = str(prog.get("phase") or ("live" if ready else "starting"))
+    message = str(
+        prog.get("message")
+        or (
+            f"{n_rollouts} rollout(s) ready"
+            if ready
+            else "Worker is starting…"
+        )
+    )
+    if ready:
+        phase = "live"
+    return {
+        "phase": phase,
+        "message": message,
+        "n_rollouts": n_rollouts,
+        "ready": ready,
+        "updated_at": prog.get("updated_at"),
+    }
 
 
 _PHASE_STEPS = (
@@ -549,39 +613,95 @@ _PHASE_STEPS = (
 )
 
 
-def _page_run_pending(runs_dir: Path, stem: str) -> str:
-    prog = run_progress.read_progress(runs_dir, stem) or {}
-    phase = str(prog.get("phase") or "starting")
-    message = str(prog.get("message") or "Worker is starting…")
+def _phase_items_html(phase: str) -> str:
     items = []
     seen_active = False
     for key, label in _PHASE_STEPS:
-        if key == "live":
-            cls = ""
-        elif key == phase:
+        if key == phase:
             cls = "active"
             seen_active = True
-        elif not seen_active:
+        elif key == "live" and phase == "live":
+            cls = "active"
+            seen_active = True
+        elif not seen_active and key != "live":
             cls = "done"
         else:
             cls = ""
+        if phase == "live" and key != "live":
+            cls = "done"
         tag = "now" if cls == "active" else ("ok" if cls == "done" else "")
         items.append(
-            f'<li class="{cls}">'
+            f'<li data-phase="{_esc(key)}" class="{cls}">'
             + (f'<span class="tag">{tag}</span>' if tag else "")
             + f"{_esc(label)}</li>"
         )
+    return "".join(items)
+
+
+def _page_run_pending(runs_dir: Path, stem: str) -> str:
+    snap = _run_live_snapshot(runs_dir, stem)
+    phase = str(snap.get("phase") or "starting")
+    message = str(snap.get("message") or "Worker is starting…")
+    steps_json = json.dumps([[k, lab] for k, lab in _PHASE_STEPS])
+    stem_json = json.dumps(stem)
+    script = f"""
+    <script>
+    (function () {{
+      const stem = {stem_json};
+      const steps = {steps_json};
+      const statusEl = document.getElementById('dg-status');
+      const msgEl = document.getElementById('dg-message');
+      const list = document.getElementById('dg-phases');
+
+      function renderPhases(phase) {{
+        let seen = false;
+        list.innerHTML = steps.map(([key, label]) => {{
+          let cls = '';
+          if (phase === 'live') {{
+            cls = key === 'live' ? 'active' : 'done';
+          }} else if (key === phase) {{
+            cls = 'active'; seen = true;
+          }} else if (!seen && key !== 'live') {{
+            cls = 'done';
+          }}
+          const tag = cls === 'active' ? 'now' : (cls === 'done' ? 'ok' : '');
+          return '<li data-phase="' + key + '" class="' + cls + '">'
+            + (tag ? '<span class="tag">' + tag + '</span>' : '')
+            + label + '</li>';
+        }}).join('');
+      }}
+
+      function onProgress(data) {{
+        if (data.message) msgEl.textContent = data.message;
+        if (data.phase) {{
+          statusEl.textContent = data.ready ? 'live' : 'starting';
+          renderPhases(data.phase);
+        }}
+      }}
+
+      const es = new EventSource('/api/runs/' + encodeURIComponent(stem) + '/events');
+      es.addEventListener('progress', (ev) => {{
+        try {{ onProgress(JSON.parse(ev.data)); }} catch (e) {{}}
+      }});
+      es.addEventListener('ready', () => {{
+        es.close();
+        location.reload();
+      }});
+    }})();
+    </script>
+    """
     body = f"""
     <nav class="crumb"><a href="/">runs</a> / {_esc(stem)}</nav>
     <div class="meta">
-      <span>status <strong>starting</strong></span>
-      <span>{_esc(message)}</span>
+      <span>status <strong id="dg-status">starting</strong></span>
+      <span id="dg-message">{_esc(message)}</span>
     </div>
-    <p>This page refreshes every few seconds. Rollout timelines (prefill, decode,
-    sandbox tools) appear once training emits telemetry.</p>
-    <ul class="phases">{"".join(items)}</ul>
+    <p>Live updates via server-sent events (no page reload). Rollout timelines
+    (prefill, decode, sandbox tools) appear once training emits telemetry.</p>
+    <ul class="phases" id="dg-phases">{_phase_items_html(phase)}</ul>
+    {script}
     """
-    return _layout(f"{stem} (starting)", body, refresh_seconds=3)
+    return _layout(f"{stem} (starting)", body)
 
 
 def _page_run(runs_dir: Path, stem: str) -> str:

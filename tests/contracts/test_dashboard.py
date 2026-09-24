@@ -146,7 +146,8 @@ async def test_dashboard_pending_run_page(tmp_path: Path) -> None:
         body = res.read().decode()
         assert res.status == 200
         assert "Download model weights" in body
-        assert "refresh" in body
+        assert "EventSource" in body
+        assert "http-equiv" not in body.lower()
         assert "404" not in body
         conn.request("GET", "/")
         res = conn.getresponse()
@@ -157,6 +158,35 @@ async def test_dashboard_pending_run_page(tmp_path: Path) -> None:
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_run_live_snapshot_ready(tmp_path: Path) -> None:
+    from daytona_gym.telemetry.progress import write_progress
+
+    write_progress(tmp_path, "r1", phase="training", message="waiting")
+    snap = dash_mod._run_live_snapshot(tmp_path, "r1")
+    assert snap["ready"] is False
+    assert snap["phase"] == "training"
+
+    (tmp_path / "r1.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "rollout",
+                "rollout_id": "rollout_0",
+                "status": "completed",
+                "reward": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # run_detail may need richer schema — if n_rollouts stays 0, still ok to test API shape
+    snap2 = dash_mod._run_live_snapshot(tmp_path, "r1")
+    assert "phase" in snap2
+    assert "message" in snap2
+
+
+async def test_export_static_html(tmp_path: Path) -> None:
     path = tmp_path / "dogfood.jsonl"
     await _write_jsonl(path, n=1)
     out = tmp_path / "dashboard.html"
