@@ -86,12 +86,12 @@ Example (aspirational):
     prints a live `https://….trycloudflare.com` URL — open that on your Mac. No Edit
     Pod HTTP ports, no file download loop.
   - On a laptop with local traces: `dg dash` opens the browser on localhost.
-- Remote BYO worker: ``SshWorker`` — ``TrainConfig(...).launch(worker=SshWorker(...))``
-  from a laptop over direct TCP SSH. See ``examples/gym_sdk/remote_from_laptop.py``.
-  - **RunPod:** ``runpod_worker(pod_id)`` (or ``RUNPOD_POD_ID`` + ``RUNPOD_API_KEY``)
-    resolves public IP + SSH port via the [RunPod API](https://docs.runpod.io/api-reference/pods/GET/pods/podId) —
-    no hand-copy from the Connect tab. Pod must expose ``22/tcp`` (direct SSH).
-  - Homelab: pass ``--host root@ip --ssh-port 22`` (or any OpenSSH box).
+- Remote BYO worker: ``SshWorker`` — ``TrainConfig(...).launch(worker=…)`` from a laptop
+  (this is the coding-agent path). See ``examples/gym_sdk/remote_from_laptop.py``.
+  - **RunPod:** ``runpod_worker(pod_id)`` uses the proxy SSH endpoint
+    (``user@ssh.runpod.io``) via a PTY shell — works even when the container has no
+    ``sshd`` (e.g. slime + ``sleep infinity``). Needs ``RUNPOD_API_KEY`` + account SSH key.
+  - Homelab / real sshd: pass ``--host root@ip --ssh-port 22`` (classic SCP + exec).
 
 ## Core architecture
 
