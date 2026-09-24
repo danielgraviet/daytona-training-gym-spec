@@ -64,7 +64,7 @@ class TrainingRun:
             port=port,
             open_browser=open_browser,
             share=share,
-            quiet=False,
+            quiet=True,
         )
         stem = Path(self.telemetry_path).stem
         base = handle.url.rstrip("/")
@@ -86,7 +86,14 @@ class TrainingRun:
         """Block until Ctrl+C, then stop the dashboard."""
         if self._dashboard is None:
             return
-        print("dashboard running — Ctrl+C to stop", flush=True)
+        url = self.dashboard_url or self._dashboard.url
+        print(flush=True)
+        print("=" * 60, flush=True)
+        print("  OPEN ON YOUR LAPTOP", flush=True)
+        print(f"  {url}", flush=True)
+        print("=" * 60, flush=True)
+        print("  Ctrl+C to stop the dashboard", flush=True)
+        print(flush=True)
         try:
             while True:
                 time.sleep(3600)

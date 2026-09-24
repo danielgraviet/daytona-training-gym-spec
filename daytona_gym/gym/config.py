@@ -101,7 +101,14 @@ class TrainConfig:
         if should_open:
             try:
                 url = run.open(open_browser=open_browser)
-                print(f"dashboard: {url}", flush=True)
+                # Loud banner — easy to spot after Ray's verbose job logs.
+                print(flush=True)
+                print("=" * 60, flush=True)
+                print("  ✓ training finished", flush=True)
+                print(f"  ✓ run  {run.training_run_id}", flush=True)
+                print(f"  → OPEN  {url}", flush=True)
+                print("=" * 60, flush=True)
+                print(flush=True)
             except Exception as exc:  # noqa: BLE001 — launch succeeded; dash is best-effort
                 print(f"dashboard open failed: {exc}", file=sys.stderr)
                 print(f"inspect: {run.inspect_hint}", file=sys.stderr)

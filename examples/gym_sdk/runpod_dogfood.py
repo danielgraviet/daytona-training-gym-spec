@@ -60,20 +60,24 @@ def build_config() -> TrainConfig:
     )
 
 
-def print_run(run: TrainingRun) -> None:
-    print(f"training_run_id={run.training_run_id}")
+def print_run(run: TrainingRun, *, verbose: bool = False) -> None:
+    """Short summary by default; full Ray argv only with ``verbose``."""
+    status = "ok" if run.returncode in (0, None) and not run.dry_run else (
+        "dry-run" if run.dry_run else f"exit={run.returncode}"
+    )
+    print(f"run={run.training_run_id}  {status}")
     print(f"telemetry={run.telemetry_path}")
-    print(f"dry_run={run.dry_run}")
-    print(f"returncode={run.returncode}")
-    print(f"inspect: {run.inspect_hint}")
     if run.dashboard_url:
-        print(f"dashboard: {run.dashboard_url}")
+        print(f"dashboard={run.dashboard_url}")
+    else:
+        print(f"inspect={run.inspect_hint}")
     env_vars = run.runtime_env.get("env_vars", {})
-    print("runtime_env keys:", sorted(env_vars.keys()))
     if "DAYTONA_API_KEY" in env_vars:
         print("BUG: DAYTONA_API_KEY leaked into Ray runtime_env", file=sys.stderr)
-    print("command:")
-    print(" ", " ".join(run.command))
+    if verbose or run.dry_run:
+        print("runtime_env keys:", sorted(env_vars.keys()))
+        print("command:")
+        print(" ", " ".join(run.command))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,6 +102,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Exit immediately after launch (dashboard would stop with the process)",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print full Ray command / runtime_env (noisy)",
+    )
     args = parser.parse_args(argv)
 
     config = build_config()
@@ -111,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
         return 2
 
-    print_run(run)
+    print_run(run, verbose=args.verbose or not args.launch)
     if run.dry_run:
         print("\nRe-run with --launch when ready on the GPU box.")
         return 0
