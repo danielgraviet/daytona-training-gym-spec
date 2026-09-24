@@ -176,15 +176,10 @@ class TrainConfig:
         should_open = True if open is None else open
         if should_open:
             try:
-                url = run.open(open_browser=open_browser)
-                print(flush=True)
-                print("=" * 60, flush=True)
-                print("  ✓ training finished", flush=True)
-                print(f"  ✓ run  {run.training_run_id}", flush=True)
-                print(f"  → OPEN  {url}", flush=True)
-                print("=" * 60, flush=True)
-                print(flush=True)
+                run.open(open_browser=open_browser)
             except Exception as exc:  # noqa: BLE001
                 print(f"dashboard open failed: {exc}", file=sys.stderr)
                 print(f"inspect: {run.inspect_hint}", file=sys.stderr)
+        run.status = "failed" if int(run.returncode or 0) != 0 else "completed"
+        run.result()  # prints Modal-shaped completion banner (already done)
         return run

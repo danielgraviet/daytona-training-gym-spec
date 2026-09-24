@@ -140,9 +140,10 @@ def start_dashboard(
                         self.wfile.write(b"event: ready\ndata: {}\n\n")
                         self.wfile.flush()
                         break
-                    if snap.get("failed"):
+                    if snap.get("failed") or snap.get("done"):
+                        evt = "failed" if snap.get("failed") else "done"
                         self.wfile.write(
-                            f"event: failed\ndata: {payload}\n\n".encode("utf-8")
+                            f"event: {evt}\ndata: {payload}\n\n".encode("utf-8")
                         )
                         self.wfile.flush()
                         break
@@ -719,8 +720,23 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
             else "Worker is starting…"
         )
     )
-    failed = phase == "failed"
-    if ready:
+    failed = phase == "failed" or prog.get("status") == "failed"
+    status = str(prog.get("status") or "")
+    if not status:
+        if failed:
+            status = "failed"
+        elif phase == "completed":
+            status = "completed"
+        elif ready:
+            status = "running"
+        else:
+            status = "running" if phase else "pending"
+    done = bool(
+        prog.get("done")
+        or status in {"completed", "failed"}
+        or phase in {"completed", "failed"}
+    )
+    if ready and not failed:
         phase = "live"
         failed = False
     log_tail = prog.get("log_tail") or []
@@ -736,6 +752,9 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
         "n_rollouts": n_rollouts,
         "ready": ready,
         "failed": failed,
+        "done": done,
+        "status": status,
+        "returncode": prog.get("returncode"),
         "updated_at": prog.get("updated_at"),
     }
 
@@ -747,6 +766,7 @@ _PHASE_STEPS = (
     ("ray_start", "Start Ray / Slime"),
     ("training", "Training — waiting for first rollout"),
     ("live", "Rollouts live"),
+    ("completed", "Training complete"),
 )
 
 

@@ -332,6 +332,7 @@ class SshWorker:
             if not telemetry:
                 telemetry = f"{self.remote_repo}/runs/{run_id}.jsonl"
 
+            final_rc = None if detached else (returncode if rc == 0 else rc)
             run = TrainingRun(
                 run_id=run_id,
                 telemetry_path=telemetry,
@@ -339,11 +340,16 @@ class SshWorker:
                 env={"DAYTONA_GYM_WORKER": self.host},
                 runtime_env={"worker": "ssh", "host": self.host, "detached": detached},
                 dry_run=False,
-                returncode=None if detached else (returncode if rc == 0 else rc),
+                returncode=final_rc,
                 inspect_hint=f"dg stats {telemetry}"
                 + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
                 dashboard_url=dashboard,
                 detached=detached,
+                status=(
+                    "running"
+                    if detached
+                    else ("failed" if int(final_rc or 0) != 0 else "completed")
+                ),
             )
             if dashboard:
                 print(flush=True)
@@ -468,6 +474,11 @@ class SshWorker:
             + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
             dashboard_url=dashboard,
             detached=detached,
+            status=(
+                "running"
+                if detached
+                else ("failed" if int(returncode or 0) != 0 else "completed")
+            ),
         )
         if dashboard and not interrupted:
             print(flush=True)

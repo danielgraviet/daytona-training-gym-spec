@@ -169,12 +169,18 @@ def spawn_detached_run(job_json: Path, payload: dict) -> TrainingRun:
         telemetry_path=telemetry,
         command=[sys.executable, "-m", "daytona_gym.gym.remote_job", str(child_job)],
         env={},
-        runtime_env={"detached": True, "pid": proc.pid, "log": str(log)},
+        runtime_env={
+            "detached": True,
+            "pid": proc.pid,
+            "log": str(log),
+            "status_path": str(status),
+        },
         dry_run=False,
         returncode=None,
         inspect_hint=f"dg stats {telemetry}  |  {dashboard}",
         dashboard_url=dashboard,
         detached=True,
+        status="running",
     )
 
 
@@ -276,28 +282,50 @@ def _run_supervised(payload: dict) -> int:
         )
         run.returncode = finished.returncode
         run.command = finished.command
-        if int(run.returncode or 0) != 0:
+        rc = int(run.returncode or 0)
+        if rc != 0:
             set_phase(
                 "failed",
-                f"Training exited with code {run.returncode}",
+                f"Training exited with code {rc}",
                 detail="Check the worker log / Ray job output on the GPU box",
+                status="failed",
+                returncode=rc,
             )
         else:
             set_phase(
-                "training",
-                "Training finished — open dash for rollouts",
-                detail=f"returncode={finished.returncode}",
+                "completed",
+                "Training complete",
+                detail=f"returncode={rc}",
+                status="completed",
+                returncode=rc,
             )
+        _write_status(
+            status_path,
+            {
+                "run_id": run.training_run_id,
+                "telemetry_path": run.telemetry_path,
+                "dashboard_url": dashboard,
+                "pid": os.getpid(),
+                "done": True,
+                "returncode": rc,
+            },
+        )
         _print_markers(
             run_id=run.training_run_id,
             telemetry=run.telemetry_path,
             dashboard=dashboard,
-            returncode=int(run.returncode or 0),
+            returncode=rc,
             detached=True,
         )
+        # Visible on the worker log / SSH stream (Modal-shaped).
+        print(flush=True)
+        if rc == 0:
+            print(f"Training complete: {run.training_run_id}", flush=True)
+        else:
+            print(f"Training failed: {run.training_run_id} (exit={rc})", flush=True)
         if dashboard:
             run.wait_dashboard()
-        return int(run.returncode or 0)
+        return rc
     except DaytonaError as exc:
         try:
             if "stem" in locals() and "runs_dir" in locals():
@@ -308,14 +336,22 @@ def _run_supervised(payload: dict) -> int:
                     stem,
                     phase="failed",
                     message=f"[{exc.code}] {exc.message}",
+                    status="failed",
+                    returncode=2,
                 )
         except Exception:  # noqa: BLE001
             pass
         _write_status(
             status_path,
-            {"error": f"[{exc.code}] {exc.message}", "run_id": locals().get("stem", "failed")},
+            {
+                "error": f"[{exc.code}] {exc.message}",
+                "run_id": locals().get("stem", "failed"),
+                "done": True,
+                "returncode": 2,
+            },
         )
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
+        print(f"Training failed: {locals().get('stem', 'failed')}", flush=True)
         # Keep dash up so the failed progress page is visible through the tunnel.
         try:
             if "run" in locals() and getattr(run, "dashboard_url", None):
@@ -334,11 +370,22 @@ def _run_supervised(payload: dict) -> int:
                     stem,
                     phase="failed",
                     message=str(exc)[:500],
+                    status="failed",
+                    returncode=2,
                 )
         except Exception:  # noqa: BLE001
             pass
-        _write_status(status_path, {"error": str(exc), "run_id": locals().get("stem", "failed")})
+        _write_status(
+            status_path,
+            {
+                "error": str(exc),
+                "run_id": locals().get("stem", "failed"),
+                "done": True,
+                "returncode": 2,
+            },
+        )
         print(f"daytona error: {exc}", file=sys.stderr)
+        print(f"Training failed: {locals().get('stem', 'failed')}", flush=True)
         try:
             if "run" in locals() and getattr(run, "dashboard_url", None):
                 run.wait_dashboard()

@@ -12,9 +12,13 @@ RunPod (recommended)::
 
   python examples/gym_sdk/remote_from_laptop.py --launch
 
-Detached (return run id + dash URL; training keeps going on the pod)::
+Detached (return run id + dash URL; CLI still follows until finished)::
 
   python examples/gym_sdk/remote_from_laptop.py --launch --detach
+
+Fire-and-forget (no completion banner; training keeps going)::
+
+  python examples/gym_sdk/remote_from_laptop.py --launch --detach --no-wait
 
 Uses RunPod proxy SSH (``user@ssh.runpod.io``) with a PTY shell, so it works
 even when the container has no ``sshd`` (e.g. slime + ``sleep infinity``).
@@ -119,7 +123,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--detach",
         action="store_true",
-        help="Return as soon as run id + dashboard URL are ready; train continues on the pod",
+        help="Return dashboard URL as soon as ready; training continues on the pod",
+    )
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="With --detach: exit immediately (do not follow until Training complete)",
     )
     args = parser.parse_args(argv)
 
@@ -160,12 +169,32 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"inspect={run.inspect_hint}")
     if run.detached:
-        print("detached=true  (training continues on the worker)")
-    elif run.returncode is not None:
-        print(f"exit={run.returncode}")
+        print("detached=true  (training continues on the worker)", flush=True)
+
     if not args.launch:
         print("\nRe-run with --launch when the worker SSH is ready.")
-    return 0 if run.detached else int(run.returncode or 0)
+        return 0
+
+    # Modal-shaped: follow until done and print "Training complete" (unless --no-wait).
+    if run.detached and args.no_wait:
+        print("no-wait=true  (call run.result() later to block until finished)", flush=True)
+        return 0
+
+    try:
+        if run.detached or run.returncode is None:
+            run.result()
+        elif run.status not in {"completed", "failed"}:
+            run.status = "failed" if int(run.returncode or 0) != 0 else "completed"
+            run.result()
+        else:
+            run._print_completion_banner()
+    except TimeoutError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+    return int(run.returncode or 0)
 
 
 if __name__ == "__main__":
