@@ -1,11 +1,11 @@
-"""Optional RunPod helper: resolve a pod id → ``SshWorker`` (public IP + TCP port).
+"""RunPod helper: resolve a pod id → ``SshWorker`` for laptop agents.
 
-Uses the [RunPod REST API](https://docs.runpod.io/api-reference/pods/GET/pods/podId)
-so partners do not copy IP/port from the Connect tab by hand.
+Prefer the **proxy** SSH endpoint (``user@ssh.runpod.io``). That works for every
+pod with account SSH keys — including slime images that only run
+``sleep infinity`` and never start container ``sshd``.
 
-Requires:
-  - ``RUNPOD_API_KEY`` (Bearer)
-  - Pod created with SSH + ``22/tcp`` exposed (direct SSH, not only the proxy)
+Direct TCP (``root@PUBLIC_IP -p PORT``) is optional when sshd is actually up;
+most coding-agent flows should use the proxy + PTY shell transport.
 """
 
 from __future__ import annotations
@@ -16,20 +16,27 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from daytona_gym.gym.worker import SshWorker
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 
-_API = "https://rest.runpod.io/v1"
+_API_V1 = "https://rest.runpod.io/v1"
+_API_V2 = "https://api.runpod.io/v2"
+_UA = "daytona-gym/0.1 (+https://github.com/danielgraviet/daytona-training-gym-spec)"
 
 
 @dataclass(frozen=True)
 class RunPodSshInfo:
     pod_id: str
-    public_ip: str
-    ssh_port: int
-    user: str = "root"
+    # Proxy (always preferred for agents)
+    proxy_user: str | None = None
+    proxy_host: str = "ssh.runpod.io"
+    proxy_port: int = 22
+    # Direct TCP (only if container sshd is listening)
+    public_ip: str | None = None
+    ssh_port: int | None = None
+    direct_user: str = "root"
 
     def to_worker(
         self,
@@ -37,16 +44,46 @@ class RunPodSshInfo:
         identity: str | Path | None = None,
         remote_repo: str = "/root/daytona-training-gym-spec",
         pull: bool = True,
+        prefer: Literal["proxy", "direct", "auto"] = "proxy",
     ) -> SshWorker:
-        return SshWorker(
-            host=f"{self.user}@{self.public_ip}",
-            port=self.ssh_port,
-            identity=identity
+        ident = (
+            identity
             or os.environ.get("DAYTONA_GYM_SSH_IDENTITY")
-            or os.environ.get("RUNPOD_SSH_IDENTITY"),
+            or os.environ.get("RUNPOD_SSH_IDENTITY")
+        )
+        mode = prefer
+        if mode == "auto":
+            mode = "direct" if self.public_ip and self.ssh_port else "proxy"
+
+        if mode == "direct":
+            if not self.public_ip or self.ssh_port is None:
+                raise DaytonaError(
+                    ErrorCode.PLATFORM_ERROR,
+                    f"pod {self.pod_id} has no direct SSH endpoint yet",
+                )
+            return SshWorker(
+                host=f"{self.direct_user}@{self.public_ip}",
+                port=self.ssh_port,
+                identity=ident,
+                remote_repo=remote_repo,
+                pull=pull,
+                name=f"runpod-direct:{self.pod_id}",
+                transport="auto",
+            )
+
+        if not self.proxy_user:
+            raise DaytonaError(
+                ErrorCode.PLATFORM_ERROR,
+                f"pod {self.pod_id} has no proxy SSH user yet — is it RUNNING?",
+            )
+        return SshWorker(
+            host=f"{self.proxy_user}@{self.proxy_host}",
+            port=self.proxy_port,
+            identity=ident,
             remote_repo=remote_repo,
             pull=pull,
             name=f"runpod:{self.pod_id}",
+            transport="shell",
         )
 
 
@@ -56,7 +93,7 @@ def resolve_runpod_ssh(
     api_key: str | None = None,
     user: str = "root",
 ) -> RunPodSshInfo:
-    """Fetch public IP + mapped port 22 for a running Pod."""
+    """Fetch proxy (+ optional direct) SSH endpoints for a running Pod."""
     pid = (pod_id or os.environ.get("RUNPOD_POD_ID") or "").strip()
     if not pid:
         raise DaytonaError(
@@ -70,14 +107,12 @@ def resolve_runpod_ssh(
             "RUNPOD_API_KEY required to resolve pod SSH endpoints",
         )
 
-    data = _get_pod(pid, api_key=key)
+    data = _get_pod_v2(pid, api_key=key)
     info = parse_runpod_ssh(data, user=user)
-    if info is None:
+    if info.proxy_user is None and (not info.public_ip or info.ssh_port is None):
         raise DaytonaError(
             ErrorCode.PLATFORM_ERROR,
-            f"pod {pid} has no direct SSH yet — wait until RUNNING with 22/tcp "
-            "exposed (Connect → SSH over exposed TCP). Proxy-only "
-            "ssh.runpod.io cannot do SCP.",
+            f"pod {pid} has no SSH endpoints yet — wait until RUNNING",
         )
     return info
 
@@ -90,18 +125,23 @@ def runpod_worker(
     remote_repo: str = "/root/daytona-training-gym-spec",
     pull: bool = True,
     user: str = "root",
+    prefer: Literal["proxy", "direct", "auto"] = "proxy",
 ) -> SshWorker:
-    """One-liner: ``TrainConfig(...).launch(worker=runpod_worker(\"abc123\"))``."""
+    """Laptop agent default: proxy SSH + PTY shell (works without container sshd)."""
     return resolve_runpod_ssh(pod_id, api_key=api_key, user=user).to_worker(
         identity=identity,
         remote_repo=remote_repo,
         pull=pull,
+        prefer=prefer,
     )
 
 
-def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshInfo | None:
-    """Extract direct SSH endpoint from a Pod JSON document."""
+def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshInfo:
+    """Extract proxy + direct SSH endpoints from a Pod JSON document (v1 or v2)."""
     pod_id = str(data.get("id") or data.get("podId") or "")
+    proxy_user: str | None = None
+    proxy_host = "ssh.runpod.io"
+    proxy_port = 22
     public_ip = data.get("publicIp") or data.get("public_ip")
     port: int | None = None
 
@@ -113,11 +153,19 @@ def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshIn
 
     ssh = data.get("ssh") or {}
     if isinstance(ssh, dict):
+        proxy = ssh.get("proxy") or {}
+        if isinstance(proxy, dict) and proxy.get("username"):
+            proxy_user = str(proxy["username"])
+            proxy_host = str(proxy.get("host") or proxy_host)
+            if proxy.get("port") is not None:
+                proxy_port = int(proxy["port"])
         direct = ssh.get("direct") or {}
         if isinstance(direct, dict):
             public_ip = public_ip or direct.get("ip") or direct.get("host")
             if direct.get("port") is not None:
                 port = int(direct["port"])
+            if direct.get("username"):
+                user = str(direct["username"])
 
     runtime = data.get("runtime") or {}
     ports = runtime.get("ports") if isinstance(runtime, dict) else None
@@ -132,20 +180,35 @@ def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshIn
                 port = int(entry["public"])
             break
 
-    if not pod_id or not public_ip or port is None:
-        return None
-    return RunPodSshInfo(pod_id=pod_id, public_ip=str(public_ip), ssh_port=port, user=user)
+    return RunPodSshInfo(
+        pod_id=pod_id,
+        proxy_user=proxy_user,
+        proxy_host=proxy_host,
+        proxy_port=proxy_port,
+        public_ip=str(public_ip) if public_ip else None,
+        ssh_port=port,
+        direct_user=user,
+    )
 
 
-def _get_pod(pod_id: str, *, api_key: str) -> dict[str, Any]:
-    url = f"{_API}/pods/{pod_id}"
-    # Cloudflare Error 1010 blocks Python urllib when User-Agent is missing.
+def _get_pod_v2(pod_id: str, *, api_key: str) -> dict[str, Any]:
+    """Prefer v2 (includes ``ssh.proxy``); fall back to v1 if needed."""
+    try:
+        return _http_get(f"{_API_V2}/pods/{pod_id}", api_key=api_key)
+    except DaytonaError as v2_exc:
+        try:
+            return _http_get(f"{_API_V1}/pods/{pod_id}", api_key=api_key)
+        except DaytonaError:
+            raise v2_exc from None
+
+
+def _http_get(url: str, *, api_key: str) -> dict[str, Any]:
     req = urllib.request.Request(
         url,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
-            "User-Agent": "daytona-gym/0.1 (+https://github.com/danielgraviet/daytona-training-gym-spec)",
+            "User-Agent": _UA,
         },
         method="GET",
     )
@@ -157,13 +220,11 @@ def _get_pod(pod_id: str, *, api_key: str) -> dict[str, Any]:
         hint = ""
         if exc.code == 403 and "1010" in detail:
             hint = (
-                " (Cloudflare blocked the client — upgrade daytona-gym / ensure "
-                "User-Agent is sent; or pass --host root@IP --ssh-port PORT from "
-                "RunPod Connect → SSH over exposed TCP)"
+                " (Cloudflare blocked the client — ensure User-Agent is sent)"
             )
         raise DaytonaError(
             ErrorCode.PLATFORM_ERROR,
-            f"RunPod GET /pods/{pod_id} failed: HTTP {exc.code} {detail}{hint}",
+            f"RunPod GET {url} failed: HTTP {exc.code} {detail}{hint}",
         ) from exc
     except urllib.error.URLError as exc:
         raise DaytonaError(

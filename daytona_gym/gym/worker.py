@@ -6,6 +6,7 @@ The gym core only needs a machine that can run Slime.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -15,9 +16,10 @@ import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from daytona_gym.gym.run import TrainingRun
+from daytona_gym.gym.ssh_shell import PtyShell, is_runpod_proxy_host
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 
 if TYPE_CHECKING:
@@ -27,6 +29,8 @@ _RUN_RE = re.compile(r"^__DG_RUN_ID__=(.+)$")
 _TELEMETRY_RE = re.compile(r"^__DG_TELEMETRY__=(.+)$")
 _DASH_RE = re.compile(r"^__DG_DASHBOARD__=(.+)$")
 _RC_RE = re.compile(r"^__DG_RETURNCODE__=(\d+)$")
+
+Transport = Literal["auto", "exec", "shell"]
 
 
 class Worker(Protocol):
@@ -71,17 +75,12 @@ class LocalWorker:
 
 @dataclass
 class SshWorker:
-    """Laptop → remote GPU over OpenSSH (direct TCP SSH, not ssh.runpod.io gateway).
+    """Laptop → remote GPU over SSH.
 
-    Example::
-
-        worker = SshWorker(
-            host="root@64.x.x.x",
-            port=12713,
-            identity="~/.ssh/id_ed25519",
-            remote_repo="/root/daytona-training-gym-spec",
-        )
-        run = TrainConfig(...).launch(worker=worker)
+    ``transport``:
+      - ``exec`` — classic ``scp`` + ``ssh host 'cmd'`` (needs real sshd / TCP).
+      - ``shell`` — PTY console (RunPod ``ssh.runpod.io`` proxy; no container sshd).
+      - ``auto`` — ``shell`` for RunPod proxy hosts; else try TCP then fall back.
     """
 
     host: str
@@ -91,6 +90,7 @@ class SshWorker:
     pull: bool = True
     extra_ssh_args: list[str] = field(default_factory=list)
     name: str = "ssh"
+    transport: Transport = "auto"
 
     @classmethod
     def from_env(cls) -> SshWorker:
@@ -133,9 +133,21 @@ class SshWorker:
             open=True if open is None else open,
             open_browser=open_browser,
         )
+        mode = self._resolve_transport()
+        if mode == "shell":
+            return self._shell_remote_job(payload)
         return self._exec_remote_job(payload)
 
-    def _ssh_base(self) -> list[str]:
+    def _resolve_transport(self) -> Literal["exec", "shell"]:
+        if self.transport == "shell":
+            return "shell"
+        if self.transport == "exec":
+            return "exec"
+        if is_runpod_proxy_host(self.host):
+            return "shell"
+        return "exec"
+
+    def _ssh_base(self, *, force_tty: bool = False) -> list[str]:
         cmd = [
             "ssh",
             "-o",
@@ -145,6 +157,8 @@ class SshWorker:
             "-o",
             "ConnectTimeout=20",
         ]
+        if force_tty:
+            cmd.append("-tt")
         if self.identity is not None:
             cmd.extend(["-i", str(Path(self.identity).expanduser())])
         if self.port is not None:
@@ -282,6 +296,104 @@ class SshWorker:
                 print("=" * 60, flush=True)
                 print(flush=True)
             return run
+
+    def _shell_remote_job(self, payload: dict[str, Any]) -> TrainingRun:
+        """Run via interactive PTY shell (RunPod proxy / no container sshd)."""
+        api_key = os.environ.get("DAYTONA_API_KEY")
+        if not api_key:
+            raise DaytonaError(
+                ErrorCode.USER_CODE_ERROR,
+                "DAYTONA_API_KEY must be set locally to forward to the worker",
+            )
+
+        remote_job = f"/tmp/daytona_gym_job_{os.getpid()}.json"
+        b64 = base64.b64encode(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+
+        ssh_cmd = self._ssh_base(force_tty=True)
+        print(
+            f"ssh shell worker {self.host}"
+            + (f":{self.port}" if self.port else "")
+            + "  (PTY — RunPod proxy / no scp)",
+            flush=True,
+        )
+        print(f"remote_repo={self.remote_repo}", flush=True)
+
+        def on_output(text: str) -> None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+        captured = []
+
+        def capture(text: str) -> None:
+            captured.append(text)
+            on_output(text)
+
+        with PtyShell(ssh_cmd, on_output=capture, connect_timeout=60) as shell:
+            shell.run(f"rm -f {shlex.quote(remote_job)}.b64 {shlex.quote(remote_job)}")
+            for i in range(0, len(b64), 3000):
+                chunk = b64[i : i + 3000]
+                shell.run(
+                    f"printf '%s' '{chunk}' >> {shlex.quote(remote_job)}.b64"
+                )
+            shell.run(
+                f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
+            )
+
+            launch = (
+                f"cd {shlex.quote(self.remote_repo)}"
+                + (" && (git pull --ff-only || true)" if self.pull else "")
+                + " && export DAYTONA_API_KEY="
+                + shlex.quote(api_key)
+                + " && python -m daytona_gym.gym.remote_job "
+                + shlex.quote(remote_job)
+                + "; echo __DG_SHELL_DONE__"
+            )
+            # Training can run for a long time — no wall timeout.
+            shell.run(launch, timeout=None, wait_done_marker="__DG_SHELL_DONE__")
+
+        text = "".join(captured)
+        run_id = ""
+        telemetry = ""
+        dashboard: str | None = None
+        returncode = 1
+        for line in text.replace("\r", "\n").splitlines():
+            stripped = line.strip()
+            if m := _RUN_RE.match(stripped):
+                run_id = m.group(1).strip()
+            elif m := _TELEMETRY_RE.match(stripped):
+                telemetry = m.group(1).strip()
+            elif m := _DASH_RE.match(stripped):
+                dashboard = m.group(1).strip()
+            elif m := _RC_RE.match(stripped):
+                returncode = int(m.group(1))
+
+        if not run_id:
+            run_id = "remote_unknown"
+        if not telemetry:
+            telemetry = f"{self.remote_repo}/runs/{run_id}.jsonl"
+
+        run = TrainingRun(
+            run_id=run_id,
+            telemetry_path=telemetry,
+            command=ssh_cmd,
+            env={"DAYTONA_GYM_WORKER": self.host},
+            runtime_env={"worker": "ssh-shell", "host": self.host},
+            dry_run=False,
+            returncode=returncode,
+            inspect_hint=f"dg stats {telemetry}"
+            + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
+            dashboard_url=dashboard,
+        )
+        if dashboard:
+            print(flush=True)
+            print("=" * 60, flush=True)
+            print("  → OPEN  (from worker tunnel)", flush=True)
+            print(f"  {dashboard}", flush=True)
+            print("=" * 60, flush=True)
+            print(flush=True)
+        return run
 
 
 def config_to_remote_payload(

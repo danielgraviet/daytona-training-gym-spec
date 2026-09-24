@@ -79,7 +79,13 @@ def test_ssh_worker_parses_markers(tmp_path: Path, monkeypatch) -> None:
     from daytona_gym.gym.run import TrainingRun
 
     cfg = _config(tmp_path)
-    worker = SshWorker(host="root@1.2.3.4", port=22, identity="/tmp/key", pull=False)
+    worker = SshWorker(
+        host="root@1.2.3.4",
+        port=22,
+        identity="/tmp/key",
+        pull=False,
+        transport="exec",
+    )
     monkeypatch.setenv("DAYTONA_API_KEY", "test-key")
 
     def fake_run(cmd, capture_output=False, text=False):  # noqa: ANN001

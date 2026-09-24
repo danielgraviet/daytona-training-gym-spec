@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Launch a Gym job on a remote BYO GPU from your **laptop** (not on the pod).
+"""Launch a Gym job on a remote BYO GPU from your **laptop** (Mac / coding agent).
 
-If you are already SSH'd into the GPU box, use instead::
+This is the path agents should use — you should not SSH in and paste commands.
 
-  python examples/gym_sdk/runpod_dogfood.py --launch
-
-From the laptop — RunPod resolves IP/port for you:
+RunPod (recommended)::
 
   export DAYTONA_API_KEY='...'
   export RUNPOD_API_KEY='...'
@@ -14,10 +12,17 @@ From the laptop — RunPod resolves IP/port for you:
 
   python examples/gym_sdk/remote_from_laptop.py --launch
 
-Homelab / manual SSH:
+Uses RunPod proxy SSH (``user@ssh.runpod.io``) with a PTY shell, so it works
+even when the container has no ``sshd`` (e.g. slime + ``sleep infinity``).
+
+Homelab / direct TCP SSH::
 
   python examples/gym_sdk/remote_from_laptop.py \\
     --host root@1.2.3.4 --ssh-port 22 -i ~/.ssh/id_ed25519 --launch
+
+If you are already on the GPU box, you can still use::
+
+  python examples/gym_sdk/runpod_dogfood.py --launch
 """
 
 from __future__ import annotations
@@ -72,9 +77,8 @@ def _build_worker(args: argparse.Namespace):
             ErrorCode.USER_CODE_ERROR,
             "Could not build a worker.\n  - "
             + "\n  - ".join(errors)
-            + "\n\nIf you are ON the GPU box already, run:\n"
-            "  python examples/gym_sdk/runpod_dogfood.py --launch\n"
-            "This script is for your laptop.",
+            + "\n\nNeed RUNPOD_POD_ID+RUNPOD_API_KEY (laptop → RunPod proxy), "
+            "or --host / DAYTONA_GYM_SSH.",
         ) from exc
 
     if args.ssh_port is not None:
