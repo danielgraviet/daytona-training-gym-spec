@@ -207,8 +207,8 @@ def _run_supervised(payload: dict) -> int:
         runs_dir = plan.telemetry_path.parent
         stem = plan.run_id
 
-        def set_phase(phase: str, message: str) -> None:
-            write_progress(runs_dir, stem, phase=phase, message=message)
+        def set_phase(phase: str, message: str, **extra) -> None:
+            write_progress(runs_dir, stem, phase=phase, message=message, **extra)
             print(f"progress: [{phase}] {message}", flush=True)
 
         set_phase("starting", "Run created — opening dashboard")
@@ -260,7 +260,11 @@ def _run_supervised(payload: dict) -> int:
             ensure_model_ready(config.model, on_phase=set_phase)
 
         config.validate(require_existing_paths=True)
-        set_phase("ray_start", "Starting Ray / Slime training job")
+        set_phase(
+            "ray_start",
+            "Starting Ray / Slime…",
+            detail="Preflight → Ray head → Slime submit (SGLang + Megatron boot next)",
+        )
 
         finished = execute_plan(
             plan,
@@ -268,10 +272,22 @@ def _run_supervised(payload: dict) -> int:
             preflight_timeout_seconds=float(
                 payload.get("preflight_timeout_seconds", 90)
             ),
+            on_phase=set_phase,
         )
-        set_phase("training", "Training running — waiting for rollouts in JSONL")
         run.returncode = finished.returncode
         run.command = finished.command
+        if int(run.returncode or 0) != 0:
+            set_phase(
+                "failed",
+                f"Training exited with code {run.returncode}",
+                detail="Check the worker log / Ray job output on the GPU box",
+            )
+        else:
+            set_phase(
+                "training",
+                "Training finished — open dash for rollouts",
+                detail=f"returncode={finished.returncode}",
+            )
         _print_markers(
             run_id=run.training_run_id,
             telemetry=run.telemetry_path,
@@ -300,11 +316,34 @@ def _run_supervised(payload: dict) -> int:
             {"error": f"[{exc.code}] {exc.message}", "run_id": locals().get("stem", "failed")},
         )
         print(f"daytona error [{exc.code}]: {exc.message}", file=sys.stderr)
+        # Keep dash up so the failed progress page is visible through the tunnel.
+        try:
+            if "run" in locals() and getattr(run, "dashboard_url", None):
+                run.wait_dashboard()
+        except Exception:  # noqa: BLE001
+            pass
         print("__DG_RETURNCODE__=2", flush=True)
         return 2
     except Exception as exc:  # noqa: BLE001
-        _write_status(status_path, {"error": str(exc), "run_id": "failed"})
+        try:
+            if "stem" in locals() and "runs_dir" in locals():
+                from daytona_gym.telemetry.progress import write_progress as _wp
+
+                _wp(
+                    runs_dir,
+                    stem,
+                    phase="failed",
+                    message=str(exc)[:500],
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        _write_status(status_path, {"error": str(exc), "run_id": locals().get("stem", "failed")})
         print(f"daytona error: {exc}", file=sys.stderr)
+        try:
+            if "run" in locals() and getattr(run, "dashboard_url", None):
+                run.wait_dashboard()
+        except Exception:  # noqa: BLE001
+            pass
         print("__DG_RETURNCODE__=2", flush=True)
         return 2
 

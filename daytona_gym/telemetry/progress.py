@@ -18,17 +18,48 @@ def write_progress(
     *,
     phase: str,
     message: str,
+    append_activity: bool = True,
     **extra: Any,
 ) -> Path:
-    """Atomically write ``runs/<stem>.progress.json`` for the live dash."""
+    """Atomically write ``runs/<stem>.progress.json`` for the live dash.
+
+    Keeps a short ``activity`` feed (what just happened) so the UI can show
+    motion even when the current phase label stays the same for minutes.
+    """
     runs_dir = Path(runs_dir)
     runs_dir.mkdir(parents=True, exist_ok=True)
     path = progress_path(runs_dir, stem)
+    prev = read_progress(runs_dir, stem) or {}
+
+    activity: list[Any]
+    if "activity" in extra and isinstance(extra["activity"], list):
+        activity = list(extra.pop("activity"))
+    else:
+        activity = list(prev.get("activity") or [])
+        extra.pop("activity", None)
+
+    if append_activity:
+        last = activity[-1] if activity else None
+        if (
+            not isinstance(last, dict)
+            or last.get("phase") != phase
+            or last.get("message") != message
+        ):
+            activity.append(
+                {"t": time.time(), "phase": phase, "message": message}
+            )
+            activity = activity[-40:]
+
+    # Preserve log_tail across heartbeats that omit it.
+    if "log_tail" not in extra and isinstance(prev.get("log_tail"), list):
+        extra = {**extra, "log_tail": prev["log_tail"]}
+
     payload = {
         "run_id": stem,
         "phase": phase,
         "message": message,
         "updated_at": time.time(),
+        "activity": activity,
         **extra,
     }
     tmp = path.with_suffix(path.suffix + ".tmp")

@@ -147,17 +147,52 @@ async def test_dashboard_pending_run_page(tmp_path: Path) -> None:
         assert res.status == 200
         assert "Download model weights" in body
         assert "EventSource" in body
+        assert "/live" in body  # polling fallback
         assert "http-equiv" not in body.lower()
         assert "404" not in body
         conn.request("GET", "/")
         res = conn.getresponse()
         index = res.read().decode()
         assert "run_pending_1" in index
-        assert "starting" in index
+        assert "model_download" in index
+        assert "starting ·" not in index  # no misleading prefix
+        conn.request("GET", "/api/overview")
+        res = conn.getresponse()
+        overview = json.loads(res.read().decode())
+        assert any(p["stem"] == "run_pending_1" for p in overview["progress"])
+        conn.request("GET", "/api/runs/run_pending_1/live")
+        res = conn.getresponse()
+        live = json.loads(res.read().decode())
+        assert live["phase"] == "model_download"
+        assert live["failed"] is False
         conn.close()
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_run_live_snapshot_failed(tmp_path: Path) -> None:
+    from daytona_gym.telemetry.progress import write_progress
+
+    write_progress(
+        tmp_path,
+        "r_fail",
+        phase="failed",
+        message="[platform_error] ray start failed: boom",
+        log_tail=["ray start --head", "error: boom"],
+    )
+    snap = dash_mod._run_live_snapshot(tmp_path, "r_fail")
+    assert snap["failed"] is True
+    assert snap["phase"] == "failed"
+    assert "ray start failed" in snap["message"]
+    assert snap["log_tail"]
+
+    html = dash_mod._page_index(tmp_path)
+    assert "failed" in html
+    assert "starting · failed" not in html
+    pending = dash_mod._page_run_pending(tmp_path, "r_fail")
+    assert 'class="bad"' in pending or "class='bad'" in pending or 'class="bad"' in pending
+    assert "Failed" in pending
 
 
 def test_run_live_snapshot_ready(tmp_path: Path) -> None:
@@ -167,6 +202,7 @@ def test_run_live_snapshot_ready(tmp_path: Path) -> None:
     snap = dash_mod._run_live_snapshot(tmp_path, "r1")
     assert snap["ready"] is False
     assert snap["phase"] == "training"
+    assert snap["failed"] is False
 
     (tmp_path / "r1.jsonl").write_text(
         json.dumps(

@@ -20,6 +20,7 @@ import webbrowser
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlparse
 
 from daytona_gym.telemetry import dashboard_data as data
@@ -137,6 +138,12 @@ def start_dashboard(
                         last = payload
                     if snap.get("ready"):
                         self.wfile.write(b"event: ready\ndata: {}\n\n")
+                        self.wfile.flush()
+                        break
+                    if snap.get("failed"):
+                        self.wfile.write(
+                            f"event: failed\ndata: {payload}\n\n".encode("utf-8")
+                        )
                         self.wfile.flush()
                         break
                     time.sleep(2.0)
@@ -341,7 +348,7 @@ def export_static(runs_dir: Path, out_path: Path) -> Path:
 def _route(path: str, runs_dir: Path) -> tuple[str | bytes, str]:
     if path in {"/", "/index.html"}:
         return _page_index(runs_dir), "text/html; charset=utf-8"
-    if path == "/api/runs" or path.startswith("/api/runs/"):
+    if path == "/api/overview" or path == "/api/runs" or path.startswith("/api/runs/"):
         return _api(path, runs_dir), "application/json; charset=utf-8"
     if path.startswith("/run/"):
         parts = [p for p in path.split("/") if p]
@@ -361,6 +368,12 @@ def _api(path: str, runs_dir: Path) -> str:
     # api / runs
     if parts == ["api", "runs"]:
         return json.dumps(data.list_run_files(runs_dir))
+    # api / overview — fingerprint for index auto-refresh (includes progress-only)
+    if parts == ["api", "overview"]:
+        return json.dumps(_overview_snapshot(runs_dir))
+    # api / runs / <stem> / live — works before JSONL exists
+    if len(parts) == 4 and parts[3] == "live":
+        return json.dumps(_run_live_snapshot(runs_dir, parts[2]))
     # api / runs / <stem>
     if len(parts) == 3:
         path_file = _resolve_run(runs_dir, parts[2])
@@ -370,6 +383,31 @@ def _api(path: str, runs_dir: Path) -> str:
         path_file = _resolve_run(runs_dir, parts[2])
         return json.dumps(data.rollout_detail(path_file, parts[4]))
     raise FileNotFoundError(path)
+
+
+def _overview_snapshot(runs_dir: Path) -> dict[str, Any]:
+    """Compact index fingerprint so the browser can reload when anything changes."""
+    runs = []
+    for item in data.list_run_files(runs_dir):
+        runs.append(
+            {
+                "stem": item.get("stem") or item.get("name"),
+                "n": item.get("n_rollouts", 0),
+                "statuses": item.get("statuses"),
+            }
+        )
+    progress = []
+    for stem in run_progress.list_progress_stems(runs_dir):
+        prog = run_progress.read_progress(runs_dir, stem) or {}
+        progress.append(
+            {
+                "stem": stem,
+                "phase": prog.get("phase"),
+                "message": prog.get("message"),
+                "updated_at": prog.get("updated_at"),
+            }
+        )
+    return {"runs": runs, "progress": progress}
 
 
 def _resolve_run(runs_dir: Path, stem: str) -> Path:
@@ -486,19 +524,73 @@ def _layout(title: str, body: str, *, extra_head: str = "") -> str:
     }}
     .phases li.active {{ border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }}
     .phases li.done {{ color: var(--muted); }}
+    .phases li.failed {{ border-color: var(--bad); box-shadow: inset 3px 0 0 var(--bad); }}
+    .phases li.active .phase-msg {{
+      display: block;
+      margin-top: 0.35rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+    }}
     .phases .tag {{
       font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
       font-size: 0.75rem;
       color: var(--accent);
       margin-right: 0.5rem;
     }}
-    pre.preview {{
-      margin: 0.2rem 0 0.6rem 1rem;
+    .phases li.failed .tag {{ color: var(--bad); }}
+    .alive {{
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.75rem 1.25rem;
+      margin: 0 0 1rem; padding: 0.85rem 1rem;
+      background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    }}
+    .alive .clock {{
+      font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+      font-size: 1.6rem; font-weight: 600; color: var(--ink);
+      min-width: 4.5rem;
+    }}
+    .alive .clock.pulse {{ animation: dg-pulse 1.2s ease-in-out infinite; }}
+    @keyframes dg-pulse {{
+      0%, 100% {{ opacity: 1; }}
+      50% {{ opacity: 0.55; }}
+    }}
+    .conn {{
+      font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+      font-size: 0.75rem;
+    }}
+    .conn.ok {{ color: var(--accent); }}
+    .conn.wait {{ color: var(--muted); }}
+    .conn.bad {{ color: var(--bad); }}
+    .activity {{
+      list-style: none; padding: 0; margin: 0.75rem 0 1rem;
+      max-height: 14rem; overflow: auto;
+      border: 1px solid var(--line); border-radius: 4px; background: var(--card);
+    }}
+    .activity li {{
+      padding: 0.4rem 0.75rem;
+      border-bottom: 1px solid var(--line);
+      font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }}
+    .activity li:last-child {{ border-bottom: 0; color: var(--ink); }}
+    .activity .at {{ color: var(--muted); margin-right: 0.5rem; }}
+    pre.preview, pre.log-tail {{
+      margin: 0.2rem 0 0.6rem 0;
       white-space: pre-wrap;
       color: var(--muted);
       font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
       font-size: 0.78rem;
     }}
+    pre.log-tail {{
+      max-height: 12rem;
+      overflow: auto;
+      padding: 0.65rem 0.75rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+    }}
+    pre.log-tail:empty, pre.log-tail[hidden] {{ display: none; }}
   </style>
 </head>
 <body>
@@ -530,11 +622,26 @@ def _page_index(runs_dir: Path) -> str:
     rows = []
     for stem in progress_only:
         prog = run_progress.read_progress(runs_dir, stem) or {}
+        phase = str(prog.get("phase") or "starting")
+        message = str(prog.get("message") or "")
+        short = message[:100] + ("…" if len(message) > 100 else "")
+        if phase == "failed":
+            status_cell = (
+                f"<td class='bad'>failed"
+                + (f" · {_esc(short)}" if short else "")
+                + "</td>"
+            )
+        else:
+            status_cell = (
+                f"<td class='ok'>{_esc(phase)}"
+                + (f" · {_esc(short)}" if short else "")
+                + "</td>"
+            )
         rows.append(
             "<tr>"
             f"<td><a href='/run/{_esc(stem)}'>{_esc(stem)}</a></td>"
             "<td>0</td>"
-            f"<td class='ok'>starting · {_esc(prog.get('phase') or '…')}</td>"
+            f"{status_cell}"
             "<td>-</td><td>-</td>"
             "</tr>"
         )
@@ -558,6 +665,25 @@ def _page_index(runs_dir: Path) -> str:
             f"<td>{_esc(_fmt_secs(run.get('wall_p50')))}</td>"
             "</tr>"
         )
+    # Auto-reload when progress or JSONL set changes (SSE through tunnels can drop).
+    script = """
+    <script>
+    (function () {
+      let last = '';
+      async function tick() {
+        try {
+          const res = await fetch('/api/overview', { cache: 'no-store' });
+          if (!res.ok) return;
+          const text = await res.text();
+          if (last && text !== last) location.reload();
+          last = text;
+        } catch (e) {}
+      }
+      tick();
+      setInterval(tick, 2000);
+    })();
+    </script>
+    """
     body = f"""
     <nav class="crumb">runs</nav>
     <table>
@@ -568,6 +694,7 @@ def _page_index(runs_dir: Path) -> str:
         {''.join(rows)}
       </tbody>
     </table>
+    {script}
     """
     return _layout("Runs", body)
 
@@ -592,13 +719,23 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
             else "Worker is starting…"
         )
     )
+    failed = phase == "failed"
     if ready:
         phase = "live"
+        failed = False
+    log_tail = prog.get("log_tail") or []
+    if not isinstance(log_tail, list):
+        log_tail = []
     return {
         "phase": phase,
         "message": message,
+        "detail": prog.get("detail"),
+        "elapsed_s": prog.get("elapsed_s"),
+        "log_tail": [str(x) for x in log_tail[-12:]],
+        "activity": prog.get("activity") if isinstance(prog.get("activity"), list) else [],
         "n_rollouts": n_rollouts,
         "ready": ready,
+        "failed": failed,
         "updated_at": prog.get("updated_at"),
     }
 
@@ -616,24 +753,38 @@ _PHASE_STEPS = (
 def _phase_items_html(phase: str) -> str:
     items = []
     seen_active = False
+    failed = phase == "failed"
     for key, label in _PHASE_STEPS:
-        if key == phase:
+        if failed:
+            # Mark everything up to training as muted; show failure banner separately.
+            cls = "done" if key != "live" else ""
+            tag = "ok" if cls == "done" else ""
+        elif key == phase:
             cls = "active"
             seen_active = True
+            tag = "now"
         elif key == "live" and phase == "live":
             cls = "active"
             seen_active = True
+            tag = "now"
         elif not seen_active and key != "live":
             cls = "done"
+            tag = "ok"
         else:
             cls = ""
+            tag = ""
         if phase == "live" and key != "live":
             cls = "done"
-        tag = "now" if cls == "active" else ("ok" if cls == "done" else "")
+            tag = "ok"
         items.append(
             f'<li data-phase="{_esc(key)}" class="{cls}">'
             + (f'<span class="tag">{tag}</span>' if tag else "")
             + f"{_esc(label)}</li>"
+        )
+    if failed:
+        items.append(
+            '<li data-phase="failed" class="failed">'
+            '<span class="tag">err</span>Failed</li>'
         )
     return "".join(items)
 
@@ -642,6 +793,22 @@ def _page_run_pending(runs_dir: Path, stem: str) -> str:
     snap = _run_live_snapshot(runs_dir, stem)
     phase = str(snap.get("phase") or "starting")
     message = str(snap.get("message") or "Worker is starting…")
+    failed = bool(snap.get("failed"))
+    status_label = "failed" if failed else str(phase)
+    status_cls = "bad" if failed else ""
+    log_tail = snap.get("log_tail") or []
+    log_text = "\n".join(str(x) for x in log_tail)
+    activity = snap.get("activity") or []
+    activity_html = "".join(
+        "<li><span class='at'>"
+        + _esc(time.strftime("%H:%M:%S", time.localtime(float(a.get("t") or 0))))
+        + "</span>"
+        + _esc(str(a.get("message") or ""))
+        + "</li>"
+        for a in activity
+        if isinstance(a, dict)
+    )
+    elapsed0 = int(snap.get("elapsed_s") or 0)
     steps_json = json.dumps([[k, lab] for k, lab in _PHASE_STEPS])
     stem_json = json.dumps(stem)
     script = f"""
@@ -651,13 +818,36 @@ def _page_run_pending(runs_dir: Path, stem: str) -> str:
       const steps = {steps_json};
       const statusEl = document.getElementById('dg-status');
       const msgEl = document.getElementById('dg-message');
+      const detailEl = document.getElementById('dg-detail');
+      const logEl = document.getElementById('dg-log');
       const list = document.getElementById('dg-phases');
+      const clockEl = document.getElementById('dg-clock');
+      const connEl = document.getElementById('dg-conn');
+      const actEl = document.getElementById('dg-activity');
+      const ageEl = document.getElementById('dg-age');
+      let stopped = false;
+      let currentPhase = {json.dumps(phase)};
+      let currentMsg = {json.dumps(message)};
+      let serverElapsed = {elapsed0};
+      let phaseLocalStart = Date.now() - ({elapsed0} * 1000);
+      let lastServerAt = Date.now();
+      let pollOk = false;
 
-      function renderPhases(phase) {{
+      function fmt(sec) {{
+        sec = Math.max(0, Math.floor(sec));
+        if (sec < 60) return sec + 's';
+        const m = Math.floor(sec / 60), s = sec % 60;
+        return m + 'm ' + String(s).padStart(2, '0') + 's';
+      }}
+
+      function renderPhases(phase, msg) {{
         let seen = false;
-        list.innerHTML = steps.map(([key, label]) => {{
+        const failed = phase === 'failed';
+        let html = steps.map(([key, label]) => {{
           let cls = '';
-          if (phase === 'live') {{
+          if (failed) {{
+            cls = key !== 'live' ? 'done' : '';
+          }} else if (phase === 'live') {{
             cls = key === 'live' ? 'active' : 'done';
           }} else if (key === phase) {{
             cls = 'active'; seen = true;
@@ -665,43 +855,184 @@ def _page_run_pending(runs_dir: Path, stem: str) -> str:
             cls = 'done';
           }}
           const tag = cls === 'active' ? 'now' : (cls === 'done' ? 'ok' : '');
+          let extra = '';
+          if (cls === 'active' && msg) {{
+            extra = '<span class="phase-msg">' + msg.replace(/</g,'&lt;') + '</span>';
+          }}
           return '<li data-phase="' + key + '" class="' + cls + '">'
             + (tag ? '<span class="tag">' + tag + '</span>' : '')
-            + label + '</li>';
+            + label + extra + '</li>';
         }}).join('');
+        if (failed) {{
+          html += '<li data-phase="failed" class="failed">'
+            + '<span class="tag">err</span>Failed'
+            + (msg ? '<span class="phase-msg">' + msg.replace(/</g,'&lt;') + '</span>' : '')
+            + '</li>';
+        }}
+        list.innerHTML = html;
+      }}
+
+      function renderActivity(items) {{
+        if (!actEl || !items || !items.length) return;
+        actEl.innerHTML = items.map(a => {{
+          const t = a.t ? new Date(a.t * 1000) : null;
+          const hh = t ? t.toLocaleTimeString() : '';
+          return '<li><span class="at">' + hh + '</span>'
+            + String(a.message || '').replace(/</g,'&lt;') + '</li>';
+        }}).join('');
+        actEl.scrollTop = actEl.scrollHeight;
       }}
 
       function onProgress(data) {{
-        if (data.message) msgEl.textContent = data.message;
+        lastServerAt = Date.now();
+        pollOk = true;
+        if (connEl) {{
+          connEl.textContent = 'live';
+          connEl.className = 'conn ok';
+        }}
+        if (data.message) {{
+          currentMsg = data.message;
+          msgEl.textContent = data.message;
+        }}
+        if (typeof data.elapsed_s === 'number') {{
+          serverElapsed = data.elapsed_s;
+          phaseLocalStart = Date.now() - (serverElapsed * 1000);
+        }}
+        if (detailEl) {{
+          if (data.detail) {{
+            detailEl.textContent = data.detail;
+            detailEl.hidden = false;
+          }}
+        }}
+        if (logEl) {{
+          const tail = data.log_tail || [];
+          if (tail.length) {{
+            logEl.textContent = tail.join('\\n');
+            logEl.hidden = false;
+            logEl.scrollTop = logEl.scrollHeight;
+          }}
+        }}
+        if (data.activity) renderActivity(data.activity);
+        if (data.failed) {{
+          statusEl.textContent = 'failed';
+          statusEl.className = 'bad';
+          currentPhase = 'failed';
+          renderPhases('failed', currentMsg);
+          if (clockEl) clockEl.classList.remove('pulse');
+          return;
+        }}
         if (data.phase) {{
-          statusEl.textContent = data.ready ? 'live' : 'starting';
-          renderPhases(data.phase);
+          if (data.phase !== currentPhase) {{
+            currentPhase = data.phase;
+            if (typeof data.elapsed_s !== 'number') {{
+              phaseLocalStart = Date.now();
+              serverElapsed = 0;
+            }}
+          }}
+          statusEl.textContent = data.ready ? 'live' : data.phase;
+          statusEl.className = '';
+          renderPhases(data.phase, currentMsg);
+        }} else {{
+          renderPhases(currentPhase, currentMsg);
         }}
       }}
 
-      const es = new EventSource('/api/runs/' + encodeURIComponent(stem) + '/events');
-      es.addEventListener('progress', (ev) => {{
-        try {{ onProgress(JSON.parse(ev.data)); }} catch (e) {{}}
-      }});
-      es.addEventListener('ready', () => {{
-        es.close();
-        location.reload();
-      }});
+      function tickClock() {{
+        if (stopped && currentPhase === 'failed') return;
+        const local = (Date.now() - phaseLocalStart) / 1000;
+        const show = Math.max(serverElapsed || 0, local);
+        if (clockEl) clockEl.textContent = fmt(show);
+        if (ageEl) {{
+          const lag = Math.floor((Date.now() - lastServerAt) / 1000);
+          ageEl.textContent = pollOk
+            ? ('updated ' + (lag < 2 ? 'just now' : lag + 's ago'))
+            : 'waiting for first update…';
+        }}
+        if (connEl && pollOk) {{
+          const lag = (Date.now() - lastServerAt) / 1000;
+          if (lag > 12) {{
+            connEl.textContent = 'stale — retrying';
+            connEl.className = 'conn wait';
+          }}
+        }}
+      }}
+
+      async function poll() {{
+        if (stopped) return;
+        try {{
+          const res = await fetch(
+            '/api/runs/' + encodeURIComponent(stem) + '/live?t=' + Date.now(),
+            {{ cache: 'no-store' }}
+          );
+          if (!res.ok) {{
+            if (connEl) {{ connEl.textContent = 'http ' + res.status; connEl.className = 'conn bad'; }}
+            return;
+          }}
+          const data = await res.json();
+          onProgress(data);
+          if (data.ready) {{
+            stopped = true;
+            location.reload();
+            return;
+          }}
+          if (data.failed) {{
+            stopped = true;
+            if (clockEl) clockEl.classList.remove('pulse');
+          }}
+        }} catch (e) {{
+          if (connEl) {{ connEl.textContent = 'reconnect…'; connEl.className = 'conn wait'; }}
+        }}
+      }}
+
+      // Polling is primary — Cloudflare quick tunnels often drop EventSource.
+      setInterval(poll, 1500);
+      setInterval(tickClock, 250);
+      poll();
+      tickClock();
+      renderPhases(currentPhase, currentMsg);
+
+      try {{
+        const es = new EventSource('/api/runs/' + encodeURIComponent(stem) + '/events');
+        es.addEventListener('progress', (ev) => {{
+          try {{ onProgress(JSON.parse(ev.data)); }} catch (e) {{}}
+        }});
+        es.addEventListener('ready', () => {{ stopped = true; es.close(); location.reload(); }});
+        es.addEventListener('failed', (ev) => {{
+          try {{ onProgress(Object.assign({{failed: true, phase: 'failed'}}, JSON.parse(ev.data))); }}
+          catch (e) {{ onProgress({{failed: true, phase: 'failed'}}); }}
+          stopped = true; es.close();
+        }});
+        es.onerror = () => {{ /* poll keeps us alive */ }};
+      }} catch (e) {{}}
     }})();
     </script>
     """
+    clock_cls = "clock" if failed else "clock pulse"
     body = f"""
     <nav class="crumb"><a href="/">runs</a> / {_esc(stem)}</nav>
-    <div class="meta">
-      <span>status <strong id="dg-status">starting</strong></span>
-      <span id="dg-message">{_esc(message)}</span>
+    <div class="alive">
+      <span id="dg-clock" class="{clock_cls}">{_esc(f"{elapsed0}s")}</span>
+      <div>
+        <div class="meta" style="margin:0">
+          <span>status <strong id="dg-status" class="{status_cls}">{_esc(status_label)}</strong></span>
+          <span id="dg-conn" class="conn wait">connecting…</span>
+          <span id="dg-age" class="conn wait"></span>
+        </div>
+        <div id="dg-message" style="margin-top:0.35rem">{_esc(message)}</div>
+        <div id="dg-detail" class="meta" style="margin:0.35rem 0 0" {'hidden' if not snap.get('detail') else ''}>{_esc(str(snap.get('detail') or ''))}</div>
+      </div>
     </div>
-    <p>Live updates via server-sent events (no page reload). Rollout timelines
-    (prefill, decode, sandbox tools) appear once training emits telemetry.</p>
+    <p>This page polls every 1.5s (SSE is best-effort through the tunnel). The clock
+    always ticks so a long Ray/Slime boot does not look frozen. Rollout timelines appear
+    once training emits telemetry.</p>
     <ul class="phases" id="dg-phases">{_phase_items_html(phase)}</ul>
+    <h2 style="font-size:0.95rem;margin:1rem 0 0.35rem;color:var(--muted)">Activity</h2>
+    <ul class="activity" id="dg-activity">{activity_html or "<li>Waiting for worker heartbeats…</li>"}</ul>
+    <h2 style="font-size:0.95rem;margin:1rem 0 0.35rem;color:var(--muted)">Worker log (tail)</h2>
+    <pre class="log-tail" id="dg-log" {'hidden' if not log_text else ''}>{_esc(log_text)}</pre>
     {script}
     """
-    return _layout(f"{stem} (starting)", body)
+    return _layout(f"{stem} ({'failed' if failed else 'starting'})", body)
 
 
 def _page_run(runs_dir: Path, stem: str) -> str:
