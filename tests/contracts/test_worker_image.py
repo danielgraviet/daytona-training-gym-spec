@@ -72,3 +72,19 @@ def test_low_ram_warning(monkeypatch, capsys) -> None:
     monkeypatch.setattr(launch, "host_ram_bytes", lambda: 64 * 1024**3)
     launch.warn_if_low_host_ram()
     assert capsys.readouterr().out == ""
+
+
+def test_offload_flags_follow_the_recipe(tmp_path) -> None:
+    from daytona_gym.gym.dataset import PromptJsonlDataset
+    from daytona_gym.gym.recipe import CodingRecipe
+    from daytona_gym.gym.slime_command import build_train_argv
+
+    c = LocalSlimeCompute(slime_root="/s", megatron_root="/m", hf_checkpoint="/h", ref_load="/r")
+    ds = PromptJsonlDataset(tmp_path / "d.jsonl")
+    default = build_train_argv(compute=c, dataset=ds, recipe=CodingRecipe())
+    assert not any(a.startswith("--") and "offload" in a for a in default)  # Slime default
+    resident = build_train_argv(
+        compute=c, dataset=ds, recipe=CodingRecipe(offload_train=False, offload_rollout=False)
+    )
+    i = resident.index("--colocate")
+    assert resident[i + 1 : i + 3] == ["--no-offload-train", "--no-offload-rollout"]

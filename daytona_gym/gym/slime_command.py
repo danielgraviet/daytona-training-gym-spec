@@ -93,6 +93,17 @@ def build_runtime_env(
     return {"env_vars": env_vars}
 
 
+def _offload_flags(recipe: CodingRecipe) -> list[str]:
+    """Slime's --[no-]offload-train / --[no-]offload-rollout (BooleanOptionalAction)."""
+    flags: list[str] = []
+    for name, value in (("train", recipe.offload_train), ("rollout", recipe.offload_rollout)):
+        if value is True:
+            flags.append(f"--offload-{name}")
+        elif value is False:
+            flags.append(f"--no-offload-{name}")
+    return flags
+
+
 def build_train_argv(
     *,
     compute: LocalSlimeCompute,
@@ -108,6 +119,7 @@ def build_train_argv(
         "--actor-num-gpus-per-node",
         str(compute.num_gpus),
         "--colocate",
+        *_offload_flags(recipe),
         _MODEL_ARGS_MARKER,
         "--hf-checkpoint",
         str(compute.hf_checkpoint_path()),

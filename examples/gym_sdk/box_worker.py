@@ -11,7 +11,10 @@ weights survive between runs. Run history goes to the ingest host, so nothing
 else needs to persist on the box. ``~/.daytona-gym.env`` (chmod 600) holds
 DAYTONA_API_KEY, DAYTONA_GYM_INGEST_URL and DAYTONA_GYM_INGEST_TOKEN.
 
-Sized for a 24 GB card (RTX 3090 / 4090): Qwen2.5-0.5B, colocated.
+Sized for a 24 GB card (RTX 3090 / 4090) in a 16 GB-RAM box: Qwen2.5-0.5B,
+colocated with both engines kept on the GPU (no CPU offload). Default colocated
+Slime parks the idle engine in host RAM each step, which OOM-killed the
+trainer on a 15 GiB box; here SGLang is capped at 30% of VRAM instead.
 """
 
 import json
@@ -29,7 +32,7 @@ data.write_text(
 )
 
 config = TrainConfig(
-    model=Qwen25_05B(),
+    model=Qwen25_05B(sglang_mem_fraction=0.3),
     dataset=PromptJsonlDataset(data),
     recipe=Qwen25_05B_Recipe(
         batch_size=4,
@@ -38,6 +41,8 @@ config = TrainConfig(
         max_turns=6,
         timeout_seconds=180,
         tool_timeout_seconds=60,
+        offload_train=False,
+        offload_rollout=False,
     ),
     gpu_cost_per_hour=float(os.environ.get("GPU_COST_PER_HOUR", "0.0")) or None,
 )

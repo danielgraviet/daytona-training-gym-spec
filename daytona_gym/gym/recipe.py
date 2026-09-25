@@ -28,6 +28,12 @@ class CodingRecipe:
     generate_path: str = "daytona_gym.adapters.slime.generate_dogfood.generate"
     rm_path: str = "daytona_gym.adapters.slime.reward.reward"
     save_interval: int = 9999
+    # Colocated Slime offloads the idle engine to CPU RAM each step by default
+    # (None = Slime's default). False keeps both resident on the GPU: no host
+    # RAM needed for offload and no switching cost, but both must fit in VRAM.
+    # Used for 16 GB-RAM home boxes (RTX 3090 + 0.5B), see box_worker.py.
+    offload_train: bool | None = None
+    offload_rollout: bool | None = None
 
     def effective_max_concurrency(self) -> int:
         if self.max_concurrency is not None:
