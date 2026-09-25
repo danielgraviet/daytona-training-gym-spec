@@ -14,18 +14,17 @@ how it was verified). ⏳ marks work that is partly done.
 | --- | --- | --- |
 | 0 Hygiene | ✅ done | Tests green, secrets off command lines, docs point here |
 | 1 Flagship analytics | ✅ done (1.2 partial) | Per-step "where time went" + $ — verified live on A100 |
-| 2 Durable telemetry | ✅ built, ⏳ live verification | `dg ingest` + shipper + `worker_lost`; Daytona-sandbox hosting probed live; needs a real pod-kill run |
+| 2 Durable telemetry | ✅ done, verified live | `dg ingest` on a Daytona sandbox; A100 run shipped live; pod stop → `worker_lost` (2.3 OTLP deferred) |
 | 3 BYO portability | not started | Worker image, outbound agent, second provider |
 | 4 Real task packs | not started | Dataset-driven seeds, reward callable, repo-scale pack |
 | 5 Analytics-only path | not started | Slime users anywhere get the dashboard via adapter + ingest token |
 
 ### Next up
 
-1. **Phase 2 live verification on a RunPod A100** against
-   `dg ingest deploy --daytona` (checklist under Phase 2).
-2. Finish **1.2** (Slime `perf/*` ingest) — the log format is now known from the
-   live run, so this is a small parser, not a spike.
-3. Start **Phase 3**.
+1. Finish **1.2** (Slime `perf/*` ingest) — the log format is known from the
+   live run, so this is a small parser, not a spike. Bundle `dg ingest rm`.
+2. Start **Phase 3** — needs two decisions: second provider, and where the
+   worker image is published.
 
 ## Why this phase
 
@@ -228,13 +227,13 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
     object-storage backed — backup target only, not the live store).
   - [x] Pin to a commit instead of `@main` (`--ref`, resolved via `git ls-remote`).
   - [ ] Delete runs from the ingest host (`dg ingest rm <run>`), e.g. the two leaked test runs.
-- [ ] **Phase 2 exit — verified live on RunPod.** Done when:
+- [x] **Phase 2 exit — verified live on RunPod.** Done when (laptop detach item optional):
   - [x] `dg ingest deploy --daytona` (HTTPS preview URL + token), env exported on laptop and pod
   - [x] `python main.py` on the A100 prints the ingest URL (not trycloudflare / 127.0.0.1)
   - [x] dashboard updates live during training from the ingest host; terminal
     status ships (`run_b959a18c…` → completed, 32 rollouts, 2026-09-25)
   - [x] failure path ships too (`run_649d9aca…` → failed: missing `DAYTONA_API_KEY`)
-  - [ ] terminate the pod mid-run → run stays browsable, shows `worker_lost` within ~90s
+  - [x] terminate the pod mid-run → run stays browsable, shows `worker_lost` within ~90s (A100 pod stopped from the RunPod console, 2026-09-25)
   - [ ] laptop `launch(worker=runpod_worker(), detach=True)` + `run.wait()` works with no PTY sync
 
 ---
