@@ -189,25 +189,97 @@ class TrainConfig:
                 job_path = Path(fh.name)
             return spawn_detached_run(job_path, payload)
 
-        if self.model is not None:
-            from daytona_gym.gym.model_prep import ensure_model_ready
+        import time
 
-            ensure_model_ready(self.model)
+        from daytona_gym.telemetry.progress import write_progress
 
-        self.validate(require_existing_paths=True)
-        plan = build_plan(self)
-        run = execute_plan(
-            plan,
-            skip_preflight=skip_preflight,
-            preflight_timeout_seconds=preflight_timeout_seconds,
-        )
-        should_open = True if open is None else open
-        if should_open:
+        # Progress file drives the dashboard's run status; write it for the
+        # whole lifecycle (including a terminal state) like ``remote_job`` does.
+        progress: dict[str, object] = {"runs_dir": None, "stem": None}
+        started_at = time.time()
+
+        def set_phase(phase: str, message: str, **extra: object) -> None:
+            if progress["runs_dir"] is None:
+                return
             try:
-                run.open(open_browser=open_browser)
-            except Exception as exc:  # noqa: BLE001
-                print(f"dashboard open failed: {exc}", file=sys.stderr)
-                print(f"inspect: {run.inspect_hint}", file=sys.stderr)
-        run.status = "failed" if int(run.returncode or 0) != 0 else "completed"
+                write_progress(
+                    progress["runs_dir"],  # type: ignore[arg-type]
+                    str(progress["stem"]),
+                    phase=phase,
+                    message=message,
+                    **extra,
+                )
+            except Exception:  # noqa: BLE001 — progress must never break training
+                pass
+
+        run: TrainingRun | None = None
+        dash_run: TrainingRun | None = None
+        try:
+            if self.model is not None:
+                from daytona_gym.gym.model_prep import ensure_model_ready
+
+                ensure_model_ready(self.model)
+
+            self.validate(require_existing_paths=True)
+            plan = build_plan(self)
+            progress["runs_dir"] = plan.telemetry_path.parent
+            progress["stem"] = plan.telemetry_path.stem
+            set_phase(
+                "starting",
+                "Launching Slime on this GPU host",
+                status="running",
+                started_at=started_at,
+            )
+
+            # Open the dashboard BEFORE training so the run can be watched live.
+            should_open = True if open is None else open
+            if should_open:
+                dash_run = plan_to_training_run(plan, dry_run=False)
+                try:
+                    dash_run.open(open_browser=open_browser)
+                    from daytona_gym.gym.console_ui import banner_open
+
+                    banner_open(str(dash_run.dashboard_url))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"dashboard open failed: {exc}", file=sys.stderr)
+                    dash_run = None
+
+            run = execute_plan(
+                plan,
+                skip_preflight=skip_preflight,
+                preflight_timeout_seconds=preflight_timeout_seconds,
+                on_phase=lambda phase, message, **extra: set_phase(
+                    phase, message, status="running", **extra
+                ),
+            )
+        except BaseException as exc:
+            code = getattr(exc, "code", None)
+            label = f"[{code}] " if code is not None else ""
+            set_phase(
+                "failed",
+                f"{label}{getattr(exc, 'message', None) or exc}"[:500],
+                status="failed",
+                returncode=2,
+                done=True,
+                elapsed_s=time.time() - started_at,
+            )
+            if dash_run is not None:
+                dash_run.close_dashboard()
+            raise
+
+        if dash_run is not None:
+            run._dashboard = dash_run._dashboard
+            run.dashboard_url = dash_run.dashboard_url
+            run.inspect_hint = dash_run.inspect_hint
+        rc = int(run.returncode or 0)
+        run.status = "failed" if rc != 0 else "completed"
+        set_phase(
+            run.status,
+            "Training complete" if rc == 0 else f"Training failed (exit={rc})",
+            status=run.status,
+            returncode=rc,
+            done=True,
+            elapsed_s=time.time() - started_at,
+        )
         run.result()  # prints Modal-shaped completion banner (already done)
         return run

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,22 @@ from daytona_gym.telemetry.store import (
     reconstruct_rollout,
     wall_time_decomposition,
 )
+
+
+# Runs launched before progress files existed never record a terminal state;
+# don't claim "running" once their telemetry has been quiet this long.
+STALE_AFTER_SECONDS = 600.0
+
+
+def infer_status_without_progress(path: Path, *, has_rollouts: bool) -> str:
+    """Best-effort status when ``runs/<stem>.progress.json`` is missing."""
+    if not has_rollouts:
+        return "pending"
+    try:
+        idle = time.time() - path.stat().st_mtime
+    except OSError:
+        return "running"
+    return "stale" if idle >= STALE_AFTER_SECONDS else "running"
 
 
 def _progress_status(runs_dir: Path, stem: str) -> dict[str, Any]:
@@ -65,6 +82,8 @@ def list_run_files(runs_dir: Path) -> list[dict[str, Any]]:
             # Prefer terminal progress status when present.
             if item.get("run_status") in {"completed", "failed"}:
                 pass
+            elif run_progress.read_progress(runs_dir, path.stem) is None:
+                item["run_status"] = infer_status_without_progress(path, has_rollouts=bool(ids))
             elif ids:
                 item["run_status"] = "running"
             out.append(item)

@@ -768,6 +768,7 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
     prog = run_progress.read_progress(runs_dir, stem) or {}
     n_rollouts = 0
     ready = False
+    path_file: Path | None = None
     try:
         path_file = _resolve_run(runs_dir, stem)
         detail = data.run_detail(path_file)
@@ -791,6 +792,10 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
             status = "failed"
         elif phase == "completed":
             status = "completed"
+        elif ready and not prog and path_file is not None:
+            status = data.infer_status_without_progress(path_file, has_rollouts=True)
+            if status == "stale":
+                message = "No progress file and telemetry idle ≥10m — run likely ended"
         elif ready:
             status = "running"
         else:
