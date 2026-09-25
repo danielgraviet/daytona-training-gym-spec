@@ -196,3 +196,25 @@ def test_ssh_worker_from_env(monkeypatch) -> None:
     w = SshWorker.from_env()
     assert w.host == "root@1.2.3.4"
     assert w.port == 2222
+
+
+def test_gpu_cost_flows_to_payload_and_launch_env(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from daytona_gym.gym.launch import build_plan
+
+    cfg = replace(_config(tmp_path), gpu_cost_per_hour=2.49)
+    payload = config_to_remote_payload(
+        cfg,
+        remote_repo="/root/repo",
+        skip_preflight=True,
+        preflight_timeout_seconds=30,
+        open=False,
+        open_browser=False,
+    )
+    assert payload["gpu_cost_per_hour"] == 2.49
+    assert load_config(payload).gpu_cost_per_hour == 2.49
+
+    plan = build_plan(cfg)
+    assert plan.host_env["DAYTONA_GPU_COST_PER_HOUR"] == "2.49"
+    assert plan.host_env["DAYTONA_NUM_GPUS"] == "1"

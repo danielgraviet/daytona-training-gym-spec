@@ -430,6 +430,8 @@ def _api(path: str, runs_dir: Path) -> str:
         return json.dumps(_overview_snapshot(runs_dir))
     if len(parts) == 4 and parts[3] == "live":
         return json.dumps(_run_live_snapshot(runs_dir, parts[2]))
+    if len(parts) == 4 and parts[3] == "analysis":
+        return json.dumps(data.run_analysis(_resolve_run(runs_dir, parts[2])))
     if len(parts) == 4 and parts[3] == "charts":
         path_file = _resolve_run(runs_dir, parts[2])
         return json.dumps(data.run_charts(path_file))

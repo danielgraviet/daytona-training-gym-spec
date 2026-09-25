@@ -92,11 +92,14 @@ def build_plan(config: TrainConfig, *, run_id: str | None = None) -> LaunchPlan:
         api_url=compute.api_url,
     )
     host_env = {
+        "DAYTONA_NUM_GPUS": str(compute.num_gpus),
         "DAYTONA_TELEMETRY_PATH": str(telemetry),
         "DAYTONA_RUN_ID": rid,
         "DAYTONA_API_KEY_FILE": str(key_file),
         "DAYTONA_API_URL": compute.api_url,
     }
+    if config.gpu_cost_per_hour is not None:
+        host_env["DAYTONA_GPU_COST_PER_HOUR"] = str(float(config.gpu_cost_per_hour))
     return LaunchPlan(
         run_id=rid,
         telemetry_path=telemetry,
@@ -193,13 +196,21 @@ def execute_plan(
         "Submitting Slime Ray job…",
         detail="ray job submit → train.py",
     )
+    from daytona_gym.telemetry.run_meta import append_run_meta
+
+    append_run_meta(
+        plan.telemetry_path,
+        run_id=plan.run_id,
+        gpu_cost_per_hour=_float_or_none(plan.host_env.get("DAYTONA_GPU_COST_PER_HOUR")),
+        num_gpus=int(plan.host_env.get("DAYTONA_NUM_GPUS") or 1),
+    )
     gpu_sampler = None
     if os.environ.get("DAYTONA_GYM_GPU_METRICS", "1") not in {"0", "false", "False"}:
         from daytona_gym.telemetry.gpu_metrics import JsonlGpuMetricsSampler
 
         gpu_sampler = JsonlGpuMetricsSampler(
             plan.telemetry_path,
-            interval_seconds=float(os.environ.get("DAYTONA_GYM_GPU_METRICS_INTERVAL", "15")),
+            interval_seconds=float(os.environ.get("DAYTONA_GYM_GPU_METRICS_INTERVAL", "5")),
             run_id=plan.run_id,
         )
         gpu_sampler.start()
@@ -366,3 +377,10 @@ def _run_slime_job(
         publish(append_activity=True)
 
     return int(returncode)
+
+
+def _float_or_none(raw: str | None) -> float | None:
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None

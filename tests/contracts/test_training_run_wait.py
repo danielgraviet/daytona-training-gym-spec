@@ -34,7 +34,6 @@ def test_result_prints_training_complete(tmp_path: Path, capsys) -> None:
     assert run.returncode == 0
     text = capsys.readouterr().out
     assert "Training complete: run_done" in text
-    assert "training finished" in text
 
 
 def test_result_prints_training_failed(tmp_path: Path, capsys) -> None:
@@ -107,7 +106,7 @@ def test_wait_emits_stage_lines(capsys) -> None:
     run._poll_snapshot = fake_poll  # type: ignore[method-assign]
     run.wait(poll_interval=0.01)
     text = capsys.readouterr().out
-    assert "▶ [" in text
+    assert "[ray_start] Starting Ray head…" in text
     assert "Starting Ray head…" in text
     assert run.status == "completed"
 

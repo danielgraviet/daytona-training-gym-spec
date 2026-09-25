@@ -23,6 +23,10 @@ export function fetchCharts(stem) {
   return getJson(`/api/runs/${encodeURIComponent(stem)}/charts`);
 }
 
+export function fetchAnalysis(stem) {
+  return getJson(`/api/runs/${encodeURIComponent(stem)}/analysis`);
+}
+
 export function fetchLive(stem) {
   return getJson(`/api/runs/${encodeURIComponent(stem)}/live`);
 }

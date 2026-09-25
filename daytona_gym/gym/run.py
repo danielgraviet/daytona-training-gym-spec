@@ -39,7 +39,6 @@ class TrainingRun:
     status: str = "pending"  # pending | running | completed | failed
     _dashboard: Any = field(default=None, repr=False, compare=False)
     _started_at: float = field(default_factory=time.time, repr=False, compare=False)
-    _last_stage_key: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.inspect_hint:
@@ -298,23 +297,3 @@ class TrainingRun:
                 self.returncode = 0
         elif phase or status:
             self.status = "running"
-
-    def _emit_stage(self, snap: dict[str, Any]) -> None:
-        phase = str(snap.get("phase") or "")
-        message = str(snap.get("message") or snap.get("detail") or phase or "…")
-        key = f"{phase}|{message}"
-        if key == self._last_stage_key:
-            return
-        self._last_stage_key = key
-        elapsed = _format_elapsed(time.time() - self._started_at)
-        print(
-            f"▶ [{elapsed}] {message}  ({self.training_run_id})",
-            flush=True,
-        )
-
-
-def _format_elapsed(seconds: float) -> str:
-    seconds = max(0, int(seconds))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"

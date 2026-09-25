@@ -267,3 +267,13 @@ def _percentile(values: list[float], pct: float) -> float:
     high = min(low + 1, len(ordered) - 1)
     frac = rank - low
     return ordered[low] * (1 - frac) + ordered[high] * frac
+
+
+def run_analysis(path: Path) -> dict[str, Any]:
+    """Step-level "where did the time go" analytics for the SPA."""
+    from daytona_gym.telemetry.analysis import analyze_run
+
+    out = analyze_run(InMemoryTelemetryStore.load_jsonl(path))
+    out["name"] = path.name
+    out["stem"] = path.stem
+    return out

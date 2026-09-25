@@ -37,6 +37,9 @@ class TrainConfig:
     Advanced: pass ``compute=LocalSlimeCompute(...)`` instead of ``model``.
 
     ``backend=\"harbor\"`` selects the second gym adapter (not implemented yet).
+
+    ``gpu_cost_per_hour`` (per GPU) turns idle-GPU time into dollars in the
+    dashboard / ``dg stats``; omit it and $ figures are hidden.
     """
 
     dataset: AnyDataset
@@ -48,6 +51,8 @@ class TrainConfig:
     repo: str | Path | None = None
     backend: str = "slime"
     harbor: HarborBackend | HarborRecipe | None = None
+    # Optional $/GPU-hour for the BYO worker; enables $ columns in analytics.
+    gpu_cost_per_hour: float | None = None
 
     def __post_init__(self) -> None:
         self.backend = resolve_backend(self.backend)

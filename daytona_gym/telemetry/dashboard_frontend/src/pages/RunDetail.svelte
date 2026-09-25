@@ -2,13 +2,15 @@
   import { onMount } from 'svelte';
   import LineChart from '../components/charts/LineChart.svelte';
   import BarChart from '../components/charts/BarChart.svelte';
-  import { fetchCharts, fetchLive, fetchRun, navigate } from '../lib/api.js';
+  import WhereTimeWent from '../components/WhereTimeWent.svelte';
+  import { fetchAnalysis, fetchCharts, fetchLive, fetchRun, navigate } from '../lib/api.js';
 
   let { stem } = $props();
 
   let live = $state(null);
   let detail = $state(null);
   let charts = $state(null);
+  let analysis = $state(null);
   let error = $state(null);
   let clock = $state(Date.now());
 
@@ -18,9 +20,11 @@
       if (live?.ready || live?.n_rollouts > 0) {
         detail = await fetchRun(stem);
         charts = await fetchCharts(stem);
+        analysis = await fetchAnalysis(stem);
       } else {
         detail = null;
         charts = null;
+        analysis = null;
       }
       error = null;
     } catch (e) {
@@ -37,6 +41,16 @@
       clearInterval(tick);
     };
   });
+
+  // Wall-clock x axis (seconds since first sample), not sample index.
+  function gpuSeries(rows) {
+    const ts = rows.map((g) => Date.parse(g.t) / 1000).filter(Number.isFinite);
+    const t0 = ts.length ? Math.min(...ts) : 0;
+    return rows.map((g) => {
+      const t = Date.parse(g.t) / 1000;
+      return { x: Number.isFinite(t) ? t - t0 : 0, y: g.y, rollout_id: `gpu${g.gpu ?? ''} @${Math.round(t - t0)}s` };
+    });
+  }
 
   function statusClass(s) {
     if (s === 'completed' || s === 'ok') return 'ok';
@@ -111,6 +125,7 @@
       {/if}
     </div>
   {:else if charts}
+    <WhereTimeWent {analysis} {stem} />
     <div class="mb-4 grid gap-3 md:grid-cols-2">
       <LineChart title="Mean reward" data={charts.reward} yLabel="reward" />
       <LineChart title="Wall time / rollout" data={charts.wall} color="var(--warn)" yLabel="seconds" />
@@ -120,8 +135,8 @@
     {#if charts.gpu_utilization?.length}
       <div class="mb-4">
         <LineChart
-          title="GPU utilization %"
-          data={charts.gpu_utilization.map((g, i) => ({ x: i, y: g.y, rollout_id: `gpu${g.gpu ?? ''}` }))}
+          title="GPU utilization % (whole run, seconds since first sample)"
+          data={gpuSeries(charts.gpu_utilization)}
           color="var(--ok)"
         />
       </div>

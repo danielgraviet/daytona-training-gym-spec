@@ -52,6 +52,7 @@ def load_config(
         run_name=payload.get("run_name"),
         telemetry_path=payload.get("telemetry_path"),
         repo=payload.get("repo"),
+        gpu_cost_per_hour=payload.get("gpu_cost_per_hour"),
     )
     runs = Path(payload.get("repo") or ".").expanduser() / "runs"
     kind = (

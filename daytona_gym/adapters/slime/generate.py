@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import socket
 import time
 from typing import Any
 
@@ -18,6 +19,7 @@ from daytona_gym.runtime.factory import build_environment_runtime
 from daytona_gym.runtime.generation import GenerationBackend
 from daytona_gym.runtime.rollout import DaytonaTrajectory, RolloutRequest, RolloutRunner
 from daytona_gym.runtime.types import EnvironmentSpec, Tokenizer
+from daytona_gym.telemetry.batches import default_tracker
 from daytona_gym.telemetry.bind import bind_telemetry
 from daytona_gym.telemetry.ids import correlation_attributes, new_rollout_id, new_run_id
 from daytona_gym.telemetry.metrics import Metrics
@@ -169,60 +171,75 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         args, "daytona_max_tools_per_turn", "DAYTONA_MAX_TOOLS_PER_TURN", 4
     )
 
-    spec = EnvironmentSpec(
-        image=getattr(args, "daytona_image", None),
-        snapshot=getattr(args, "daytona_snapshot", None),
-        timeout_seconds=sandbox_timeout,
-        metadata={
-            "run_id": run_id,
-            "rollout_id": rollout_id,
-            **_string_metadata(getattr(args, "daytona_env_metadata", {}) or {}),
-        },
-    )
-    request = RolloutRequest(
-        run_id=run_id,
-        rollout_id=rollout_id,
-        prompt=prompt_text(sample),
-        spec=spec,
-        sampling_params=dict(sampling_params or {}),
-        timeout_seconds=rollout_timeout,
-        max_turns=max_turns,
-        max_tools_per_turn=max_tools,
-        sample_id=sample_id,
-        project_id=getattr(args, "daytona_project_id", None),
-        stdout_limit=int(getattr(args, "daytona_stdout_limit", 16_384)),
-        tool_timeout_seconds=tool_timeout,
-        worker_id=getattr(args, "daytona_worker_id", None),
-        training_step=getattr(args, "daytona_training_step", None),
-        rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
-        seed_files=seed_files,
-        bootstrap_run_tests=bootstrap,
-        require_passing_tests_for_final=require_passing,
-    )
-    runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
+    worker_id = _resolve_worker_id(args)
+    with default_tracker().track() as derived_step:
+        training_step, rollout_batch_id, step_source = _resolve_step_ids(
+            args, derived_step
+        )
+        spec = EnvironmentSpec(
+            image=getattr(args, "daytona_image", None),
+            snapshot=getattr(args, "daytona_snapshot", None),
+            timeout_seconds=sandbox_timeout,
+            metadata={
+                "run_id": run_id,
+                "rollout_id": rollout_id,
+                **_string_metadata(getattr(args, "daytona_env_metadata", {}) or {}),
+            },
+        )
+        request = RolloutRequest(
+            run_id=run_id,
+            rollout_id=rollout_id,
+            prompt=prompt_text(sample),
+            spec=spec,
+            sampling_params=dict(sampling_params or {}),
+            timeout_seconds=rollout_timeout,
+            max_turns=max_turns,
+            max_tools_per_turn=max_tools,
+            sample_id=sample_id,
+            project_id=getattr(args, "daytona_project_id", None),
+            stdout_limit=int(getattr(args, "daytona_stdout_limit", 16_384)),
+            tool_timeout_seconds=tool_timeout,
+            worker_id=worker_id,
+            training_step=training_step,
+            rollout_batch_id=rollout_batch_id,
+            seed_files=seed_files,
+            bootstrap_run_tests=bootstrap,
+            require_passing_tests_for_final=require_passing,
+        )
+        runner = RolloutRunner(runtime, generator, tracer=tracer, metrics=metrics)
 
-    try:
-        trajectory = await runner.run(request)
-    except asyncio.CancelledError:
-        attach_cancelled_metadata(sample, run_id=run_id, rollout_id=rollout_id)
-        raise
+        try:
+            trajectory = await runner.run(request)
+        except asyncio.CancelledError:
+            attach_cancelled_metadata(sample, run_id=run_id, rollout_id=rollout_id)
+            raise
 
-    apply_trajectory(sample, trajectory, tokenizer, args=args)
-    await _maybe_reward(args, sample, trajectory, tracer, metrics)
-    _record_outcome(
-        tracer,
-        sample,
-        run_id=run_id,
-        rollout_id=rollout_id,
-        sample_id=sample_id,
-        project_id=getattr(args, "daytona_project_id", None),
-        worker_id=getattr(args, "daytona_worker_id", None),
-        training_step=getattr(args, "daytona_training_step", None),
-        rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
-    )
-    _flush_telemetry(args)
-    _raise_if_unusable(sample, trajectory)
-    return sample
+        apply_trajectory(sample, trajectory, tokenizer, args=args)
+        await _maybe_reward(
+            args,
+            sample,
+            trajectory,
+            tracer,
+            metrics,
+            worker_id=worker_id,
+            training_step=training_step,
+            rollout_batch_id=rollout_batch_id,
+        )
+        _record_outcome(
+            tracer,
+            sample,
+            run_id=run_id,
+            rollout_id=rollout_id,
+            sample_id=sample_id,
+            project_id=getattr(args, "daytona_project_id", None),
+            worker_id=worker_id,
+            training_step=training_step,
+            rollout_batch_id=rollout_batch_id,
+            training_step_source=step_source,
+        )
+        _flush_telemetry(args)
+        _raise_if_unusable(sample, trajectory)
+        return sample
 
 
 def _record_outcome(
@@ -236,6 +253,7 @@ def _record_outcome(
     worker_id: str | None = None,
     training_step: object | None = None,
     rollout_batch_id: str | None = None,
+    training_step_source: str | None = None,
 ) -> None:
     """Persist dogfood-style outcome fields into telemetry for ``dg``."""
     meta = (getattr(sample, "metadata", None) or {}).get("daytona") or {}
@@ -252,6 +270,8 @@ def _record_outcome(
         rollout_batch_id=rollout_batch_id,
     )
     with tracer.span("rollout.outcome", **ids) as span:
+        if training_step_source:
+            span.set_attribute("training_step_source", training_step_source)
         if meta.get("status") is not None:
             span.set_attribute("status", str(meta["status"]))
         if meta.get("reward") is not None:
@@ -326,6 +346,10 @@ async def _maybe_reward(
     trajectory: DaytonaTrajectory,
     tracer: Tracer,
     metrics: Metrics,
+    *,
+    worker_id: str | None = None,
+    training_step: object | None = None,
+    rollout_batch_id: str | None = None,
 ) -> None:
     reward_fn = getattr(args, "daytona_reward_function", None)
     if reward_fn is None:
@@ -336,9 +360,9 @@ async def _maybe_reward(
         project_id=getattr(args, "daytona_project_id", None),
         sample_id=trajectory.sample_id,
         sandbox_id=trajectory.sandbox_id,
-        worker_id=getattr(args, "daytona_worker_id", None),
-        training_step=getattr(args, "daytona_training_step", None),
-        rollout_batch_id=getattr(args, "daytona_rollout_batch_id", None),
+        worker_id=worker_id,
+        training_step=training_step,
+        rollout_batch_id=rollout_batch_id,
     )
     started = time.perf_counter()
     status = "ok"
@@ -375,6 +399,27 @@ def _resolve_generator(args: Any) -> GenerationBackend:
     except Exception:
         pass
     return generator
+
+
+def _resolve_worker_id(args: Any) -> str:
+    explicit = getattr(args, "daytona_worker_id", None) or os.environ.get(
+        "DAYTONA_WORKER_ID"
+    )
+    if explicit:
+        return str(explicit)
+    return socket.gethostname()
+
+
+def _resolve_step_ids(args: Any, derived_step: int) -> tuple[object, str, str]:
+    """(training_step, rollout_batch_id, source). Explicit ids beat derived ones."""
+    explicit = getattr(args, "daytona_training_step", None)
+    if explicit is None:
+        raw = os.environ.get("DAYTONA_TRAINING_STEP")
+        explicit = raw if raw and raw.strip() else None
+    step: object = explicit if explicit is not None else derived_step
+    source = "explicit" if explicit is not None else "derived"
+    batch = getattr(args, "daytona_rollout_batch_id", None) or f"step_{step}"
+    return step, str(batch), source
 
 
 def _daytona_rollout_id(sample: Any) -> str:

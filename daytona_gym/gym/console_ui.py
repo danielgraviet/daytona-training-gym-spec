@@ -49,10 +49,10 @@ def banner_complete(*, ok: bool, run_id: str, returncode: int | None, url: str |
     if console is not None:
         console.print()
         if ok:
-            console.print(f"[green]✓ Training complete[/green]  {run_id}")
+            console.print(f"[green]✓ Training complete:[/green] {run_id}")
         else:
             rc = f" (exit={returncode})" if returncode is not None else ""
-            console.print(f"[red]✗ Training failed[/red]  {run_id}{rc}")
+            console.print(f"[red]✗ Training failed:[/red] {run_id}{rc}")
         if url:
             console.print(f"[dim]dashboard[/dim]  [cyan underline]{url}[/cyan underline]")
         console.print()
@@ -122,8 +122,6 @@ class WaitProgress:
             raw_tail = snap.get("log_tail")
             if isinstance(raw_tail, list):
                 log_tail = [str(x) for x in raw_tail if str(x).strip()]
-            self._last_phase = phase
-            self._last_message = message
         else:
             phase = self._last_phase
             message = self._last_message
@@ -147,12 +145,16 @@ class WaitProgress:
             and self._console is not None
             and prev_phase not in {"waiting", "syncing"}
         ):
-            # Keep a quiet breadcrumb for real worker phases only.
+            # Keep a quiet breadcrumb for real worker phases only. Escape so
+            # ``[phase]`` is not swallowed as Rich markup.
+            from rich.markup import escape
+
             self._console.print(
-                f"[dim]·[/dim] [{prev_phase}] {self._last_message}",
+                f"[dim]·[/dim] {escape(f'[{prev_phase}] {self._last_message}')}",
                 highlight=False,
             )
         self._last_key = f"{phase}|{message}"
+        self._last_phase = phase
         self._last_message = message
 
         if self._status is not None:

@@ -64,6 +64,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Print aggregate status / reward / wall / tool stats and exit",
     )
     parser.add_argument(
+        "--gpu-cost-per-hour",
+        type=float,
+        default=None,
+        help="$/GPU-hour for idle-GPU cost (default: value recorded at launch)",
+    )
+    parser.add_argument(
+        "--num-gpus",
+        type=int,
+        default=None,
+        help="GPU count for cost (default: value recorded at launch, else 1)",
+    )
+    parser.add_argument(
         "--raw",
         action="store_true",
         help="Legacy dense output",
@@ -89,6 +101,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.stats:
         _print_stats(store, path, rollout_ids)
+        _print_analysis(
+            store,
+            gpu_cost_per_hour=args.gpu_cost_per_hour,
+            num_gpus=args.num_gpus,
+        )
         return 0
 
     if args.raw:
@@ -199,6 +216,67 @@ def _print_stats(
     if tools:
         tool_bits = "  ".join(f"{name}×{count}" for name, count in tools.most_common())
         print(f"tools   {tool_bits}")
+
+
+def _print_analysis(
+    store: InMemoryTelemetryStore,
+    *,
+    gpu_cost_per_hour: float | None,
+    num_gpus: int | None,
+) -> None:
+    from daytona_gym.telemetry.analysis import analyze_run
+
+    out = analyze_run(store, gpu_cost_per_hour=gpu_cost_per_hour, num_gpus=num_gpus)
+    totals = out["totals"]
+    if not totals["n_rollouts"]:
+        return
+    phase = totals["rollout_phase_seconds"]
+    wait = totals["env_wait_seconds"]
+    print()
+    print(
+        f"where time went  ({totals['n_steps']} step(s), "
+        f"bound={totals['bound']})"
+    )
+    print(
+        f"  gpu idle waiting on envs  {_fmt_secs(wait)}"
+        f"  ({_pct(wait, phase)} of rollout phase)"
+    )
+    print(f"  straggler tax             {_fmt_secs(totals['straggler_tax_seconds'])}")
+    if totals["train_phase_seconds"]:
+        print(f"  train phase (derived)     {_fmt_secs(totals['train_phase_seconds'])}")
+    if totals["n_failed"]:
+        print(
+            f"  failed-rollout waste      {_fmt_secs(totals['failed_waste_seconds'])}"
+            f"  ({totals['n_failed']} rollout(s))"
+        )
+    prov = totals["sandbox_provision"]
+    if prov["n"]:
+        print(
+            f"  sandbox provision         p50={_fmt_secs(prov['p50'])}"
+            f"  p95={_fmt_secs(prov['p95'])}  p99={_fmt_secs(prov['p99'])}"
+        )
+    slow = sorted(totals["tools"].items(), key=lambda kv: kv[1]["p95"], reverse=True)[:3]
+    if slow:
+        bits = "  ".join(f"{name} p95={_fmt_secs(v['p95'])}" for name, v in slow)
+        print(f"  slowest tools             {bits}")
+    cost = out["cost"]
+    if cost:
+        print(
+            f"  gpu cost                  ${cost['run_cost']:.2f} over rollout window, "
+            f"${cost['idle_gpu_cost']:.2f} idle on envs ({cost['idle_fraction']:.0%} of spend)"
+        )
+    else:
+        print("  gpu cost                  (pass --gpu-cost-per-hour or set "
+              "TrainConfig(gpu_cost_per_hour=...))")
+    if len(out["steps"]) > 1:
+        print()
+        print("  step  rollouts  phase     env-wait  straggler  bound")
+        for s in out["steps"][-10:]:
+            print(
+                f"  {s['step']:>4}  {s['n_rollouts']:>8}  {_fmt_secs(s['rollout_phase_seconds']):>8}"
+                f"  {_fmt_secs(s['env_wait_seconds']):>8}  {_fmt_secs(s['straggler_tax_seconds']):>9}"
+                f"  {s['bound']}"
+            )
 
 
 def _reward_sort_key(item: tuple[object, int]) -> tuple[int, float, str]:

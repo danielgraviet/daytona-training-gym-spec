@@ -349,10 +349,12 @@ class RolloutRunner:
         started = time.perf_counter()
         status = "ok"
         try:
-            with self._tracer.span("sandbox.provision", **ids):
+            with self._tracer.span("sandbox.provision", **ids) as span:
                 try:
                     async with asyncio.timeout(request.spec.timeout_seconds):
-                        return await self._runtime.create(request.spec)
+                        env = await self._runtime.create(request.spec)
+                    span.set_attribute("sandbox_id", env.sandbox_id)
+                    return env
                 except TimeoutError as exc:
                     raise DaytonaError(
                         ErrorCode.SANDBOX_TIMEOUT,

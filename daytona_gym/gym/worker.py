@@ -34,6 +34,8 @@ _DETACHED_RE = re.compile(r"^__DG_DETACHED__=1$")
 _WORKER_LOG_RE = re.compile(r"^__DG_WORKER_LOG__=(.+)$")
 _WORKER_PID_RE = re.compile(r"^detached_pid=(\d+)")
 
+_REMOTE_ENV_FILE = "/tmp/daytona_gym_forward.env"
+
 _FORWARD_ENV_KEYS = (
     "DAYTONA_API_KEY",
     "DAYTONA_API_URL",
@@ -53,38 +55,50 @@ def _forward_env_from_local() -> dict[str, str]:
 
 
 def _export_forward_env_cmd(extra: dict[str, str] | None = None) -> str:
-    """Source secrets from a remote env file (keys written separately via PtyShell)."""
+    """Source secrets from the remote env file, then delete it.
+
+    Values are never typed on the command line; the file is removed right after
+    sourcing so secrets do not linger in ``/tmp`` (the launched job and any
+    detached child inherit them via the environment).
+    """
     merged = _forward_env_from_local()
     if extra:
         merged.update({k: v for k, v in extra.items() if v})
     if not merged:
         return "true"
-    # Never echo secret values into the typed shell command line.
     return (
-        "set -a && "
-        "[ -f /tmp/daytona_gym_forward.env ] && . /tmp/daytona_gym_forward.env; "
-        "set +a"
+        f"set -a && {{ [ -f {_REMOTE_ENV_FILE} ] && . {_REMOTE_ENV_FILE}; "
+        f"rm -f {_REMOTE_ENV_FILE}; }}; set +a"
     )
 
 
 def _install_forward_env_via_shell(shell: Any, extra: dict[str, str] | None = None) -> None:
-    """Write ``/tmp/daytona_gym_forward.env`` on the remote without logging secrets."""
+    """Write the remote env file (mode 0600) without echoing secrets.
+
+    Terminal echo is disabled while the (reversible) base64 chunks are typed, and
+    local output is muted, so neither the PTY transcript nor our stdout sees them.
+    """
     merged = _forward_env_from_local()
     if extra:
         merged.update({k: v for k, v in extra.items() if v})
     if not merged:
-        shell.run("rm -f /tmp/daytona_gym_forward.env")
+        shell.run(f"rm -f {_REMOTE_ENV_FILE}")
         return
     body = "".join(f"{k}={shlex.quote(v)}\n" for k, v in merged.items())
     b64 = base64.b64encode(body.encode("utf-8")).decode("ascii")
-    shell.run("rm -f /tmp/daytona_gym_forward.env.b64 /tmp/daytona_gym_forward.env")
-    for i in range(0, len(b64), 3000):
-        chunk = b64[i : i + 3000]
-        shell.run(f"printf '%s' '{chunk}' >> /tmp/daytona_gym_forward.env.b64")
-    shell.run(
-        "base64 -d /tmp/daytona_gym_forward.env.b64 > /tmp/daytona_gym_forward.env "
-        "&& rm -f /tmp/daytona_gym_forward.env.b64 && chmod 600 /tmp/daytona_gym_forward.env"
-    )
+    tmp = f"{_REMOTE_ENV_FILE}.b64"
+    with _quiet_shell_output(shell):
+        shell.run("stty -echo")
+        try:
+            shell.run(f"(umask 077 && rm -f {tmp} {_REMOTE_ENV_FILE} && : > {tmp})")
+            for i in range(0, len(b64), 3000):
+                chunk = b64[i : i + 3000]
+                shell.run(f"printf '%s' '{chunk}' >> {tmp}")
+            shell.run(
+                f"(umask 077 && base64 -d {tmp} > {_REMOTE_ENV_FILE}) && rm -f {tmp}"
+            )
+        finally:
+            shell.run("stty echo")
 
 
 def _local_package_root() -> Path:
@@ -529,18 +543,21 @@ class SshWorker:
 
             # Write secrets to a remote env file (never on the ssh command line).
             merged = _forward_env_from_local()
-            extra = payload.get("forward_env") or {}
-            if isinstance(extra, dict):
-                merged.update({k: v for k, v in extra.items() if v})
             if merged:
                 local_env = Path(tmp) / "forward.env"
-                local_env.write_text(
-                    "".join(f"{k}={shlex.quote(v)}\n" for k, v in merged.items()),
-                    encoding="utf-8",
+                fd = os.open(local_env, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write("".join(f"{k}={shlex.quote(v)}\n" for k, v in merged.items()))
+                # Pre-create with 0600 so scp does not land a world-readable file.
+                subprocess.run(
+                    self._ssh_base()
+                    + [f"(umask 077 && rm -f {_REMOTE_ENV_FILE} && : > {_REMOTE_ENV_FILE})"],
+                    capture_output=True,
+                    text=True,
                 )
                 scp_env = self._scp_base() + [
                     str(local_env),
-                    f"{self.host}:/tmp/daytona_gym_forward.env",
+                    f"{self.host}:{_REMOTE_ENV_FILE}",
                 ]
                 env_proc = subprocess.run(scp_env, capture_output=True, text=True)
                 if env_proc.returncode != 0:
@@ -566,7 +583,7 @@ class SshWorker:
             remote_bits = [
                 f"cd {shlex.quote(self.remote_repo)}",
             ]
-            remote_bits.append(_export_forward_env_cmd(payload.get("forward_env")))
+            remote_bits.append(_export_forward_env_cmd())
             remote_bits.append(
                 f"export PYTHONPATH={shlex.quote(self.remote_repo)}"
                 "${PYTHONPATH:+:$PYTHONPATH}"
@@ -707,7 +724,7 @@ class SshWorker:
                     shell.run(
                         f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
                     )
-                    _install_forward_env_via_shell(shell, payload.get("forward_env"))
+                    _install_forward_env_via_shell(shell)
 
                 # Clone/pull first, then overlay laptop package (unpushed DX fixes).
                 print("ensuring remote repo…", flush=True)
@@ -727,7 +744,7 @@ class SshWorker:
                 launch = (
                     f"cd {shlex.quote(self.remote_repo)}"
                     + " && "
-                    + _export_forward_env_cmd(payload.get("forward_env"))
+                    + _export_forward_env_cmd()
                     + f" && export PYTHONPATH={shlex.quote(self.remote_repo)}"
                     + '${PYTHONPATH:+:$PYTHONPATH}'
                     + " && python -m daytona_gym.gym.remote_job "
@@ -873,7 +890,9 @@ def config_to_remote_payload(
         "open": open,
         "open_browser": open_browser,
         "detach": detach,
-        "forward_env": _forward_env_from_local(),
+        "gpu_cost_per_hour": config.gpu_cost_per_hour,
+        # Secrets travel only via the 0600 env file, never in the job payload.
+        "forward_env_keys": sorted(_forward_env_from_local()),
     }
 
 

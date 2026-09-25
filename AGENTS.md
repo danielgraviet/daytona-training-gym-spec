@@ -13,7 +13,8 @@ Read in this order:
 5. `MVP_SCOPE.md`
 6. `OBSERVABILITY.md`
 7. `CONFIG_AND_CLI.md`
-8. `IMPLEMENTATION_PLAN.md`
+8. `IMPLEMENTATION_PLAN.md` (historical milestones)
+9. `ROADMAP.md` — **current plan; start here for what to build next**
 
 ## Non-negotiable constraints
 
@@ -31,19 +32,11 @@ Read in this order:
 - Cleanup must occur on success, exception, cancellation, and timeout.
 - Observability instrumentation must not materially block rollout execution.
 
-## First implementation target
+## Current implementation target
 
-Build only Milestone 0 from `IMPLEMENTATION_PLAN.md` unless explicitly asked to continue.
-
-Create:
-
-- package skeleton,
-- framework-neutral rollout/environment interfaces,
-- fake environment implementation,
-- Slime adapter contract,
-- tests.
-
-Do not start dashboard, GPU worker, or production telemetry backend yet.
+Milestones 0–2 and a local dashboard are shipped. Work from `ROADMAP.md`
+(phases in order; each task has a "done when"). Do not start a phase whose
+prerequisites are open, and keep Harbor deferred until the roadmap says so.
 
 ## Interface preference
 

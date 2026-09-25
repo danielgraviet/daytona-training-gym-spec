@@ -92,9 +92,11 @@ On BYO H100 + cloud Daytona sandboxes (`examples/coding_dogfood/`):
 | Concurrent sandboxes (e.g. 48/48 reward=1 concurrency storm) | Proven |
 | Typed failures, timeouts, tool caps, context soft-abort | Proven |
 | Local telemetry JSONL + `dg` / `dg ls` / `dg stats` / `dg dash` | Proven |
-| `TrainConfig.launch()` facade | **Skeleton shipped** (`daytona_gym.gym`; see `examples/gym_sdk/`) |
-| Live run dashboard (Modal-parity) | Local `dg dash` over JSONL; hosted URL **not** shipped |
-| BYO worker registration / one-button remote launch | **Not shipped** (manual pod scripts today) |
+| `TrainConfig.launch()` facade | **Shipped** (local + `SshWorker`; RunPod verified) |
+| Detached `TrainingRun` (`wait()` / `result()`) | **Shipped** |
+| Live run dashboard | Local `dg dash` + Cloudflare tunnel; durable hosted history **not** shipped (`ROADMAP.md` Phase 2) |
+| Step-level "where time went" (GPU idle on envs, straggler tax, $) | **Shipped** in `dg stats` + dashboard (`ROADMAP.md` Phase 1) |
+| BYO worker registration / outbound agent | **Not shipped** — RunPod via SSH proxy only (`ROADMAP.md` Phase 3) |
 | Harbor as gym backend | **Not shipped** (spec only) |
 
 Bottom line: the **hard env loop** works. The **Modal-shaped product facade** does not.

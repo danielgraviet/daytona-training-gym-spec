@@ -109,6 +109,13 @@ async def test_dashboard_http_pages(tmp_path: Path) -> None:
         assert charts["n_rollouts"] >= 1
         assert "reward" in charts
 
+        conn.request("GET", "/api/runs/dogfood/analysis")
+        res = conn.getresponse()
+        analysis = json.loads(res.read().decode())
+        assert analysis["totals"]["n_rollouts"] >= 1
+        assert analysis["steps"] and "env_wait_windows" in analysis["steps"][0]
+        assert "env_wait_seconds" in analysis["definitions"]
+
         rid = detail["rollouts"][0]["rollout_id"]
         conn.request("GET", f"/api/runs/dogfood/rollouts/{rid}")
         res = conn.getresponse()

@@ -84,6 +84,10 @@ Example (aspirational):
 - **Detached:** `launch(detach=True)` (or `remote_from_laptop.py --launch --detach`) returns as soon as
   `run.training_run_id` + `run.dashboard_url` are ready; training keeps going on the GPU worker.
 - Local dashboard: `dg dash` / `dg open` over `runs/*.jsonl`.
+- **Where the time went:** `dg stats <run.jsonl>` and the run page show, per training step,
+  GPU time idle waiting on environments, straggler tax, sandbox provision p95, and the
+  bottleneck (environment vs inference). Pass `TrainConfig(gpu_cost_per_hour=...)` (or
+  `dg stats --gpu-cost-per-hour`) to see it in dollars. Definitions: `daytona_gym/telemetry/analysis.py`.
   - **On RunPod / SSH GPU:** `dg dash` (or `launch(open=True)`) starts an outbound Cloudflare quick tunnel and
     prints a live `https://….trycloudflare.com` URL — open that on your Mac. No Edit
     Pod HTTP ports, no file download loop.

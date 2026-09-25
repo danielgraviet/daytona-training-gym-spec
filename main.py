@@ -1,49 +1,47 @@
-"""Fast GSM8K smoke — empty Daytona sandbox, no coding seed (no add(a,b)).
+"""Multi-step analytics check on a BYO GPU (run ON the pod, not the laptop).
 
-Wall-clock target ~5 min when the 3B checkpoint is already on the pod
-(model download/convert dominates first boot).
+On a fresh ``slimerl/slime:latest`` pod::
+
+    cd /root && git clone https://github.com/danielgraviet/daytona-training-gym-spec.git
+    cd daytona-training-gym-spec && pip install -e .
+    export DAYTONA_API_KEY=...          # or put it in .env (auto-loaded)
+    python main.py                      # use the image's python, not `uv run`
+
+Then::
+
+    dg stats runs/<run_id>.jsonl        # "where time went" + per-step table
+    # dashboard URL is printed at launch (Cloudflare tunnel)
+
+What "working" looks like:
+  * the per-step table has 4 rows (steps 0-3), not 1
+  * every rollout shows training_step_source=derived
+  * GPU util samples land inside the timeline (5s sampler)
+  * idle-GPU $ is populated (gpu_cost_per_hour below)
 """
 
-from daytona_gym import (
-    HuggingFaceDataset,
-    Qwen25_3B,
-    Qwen25_3B_Recipe,
-    TrainConfig,
-    runpod_worker,
-)
+from daytona_gym import PromptJsonlDataset, Qwen25_3B, Qwen25_3B_Recipe, TrainConfig
 from daytona_gym.envfile import load_dotenv
 
 load_dotenv()
 
 config = TrainConfig(
     model=Qwen25_3B(),
-    dataset=HuggingFaceDataset(
-        hf_repo="openai/gsm8k",
-        hf_config="main",
-        hf_split="train[:4]",
-        input_column="question",
-        output_column="answer",
-        prompt_template="Solve step by step:\n{input}",
-    ),
+    dataset=PromptJsonlDataset("examples/coding_dogfood/prompts/coding_pack.jsonl"),
     recipe=Qwen25_3B_Recipe(
-        # No broken.py / add(a,b) — empty sandbox only.
-        seed_coding=False,
-        bootstrap_run_tests=False,
-        require_passing_tests=False,
-        generate_path="daytona_gym.adapters.slime.generate.generate",
-        # Tiny train so this can finish in ~5 min once Megatron is warm.
-        batch_size=1,
-        n_samples=1,
-        num_rollout=1,
-        max_turns=2,
-        max_response_len=256,
-        timeout_seconds=90,
-        tool_timeout_seconds=30,
+        batch_size=4,  # prompts per step
+        n_samples=2,  # rollouts per prompt → 8 concurrent sandboxes per step
+        num_rollout=4,  # 4 training steps → 4 rows in the step table
+        max_turns=6,
+        timeout_seconds=180,
+        tool_timeout_seconds=60,
     ),
+    # Rough RunPod A100 80GB on-demand rate; adjust to what you actually pay.
+    gpu_cost_per_hour=1.64,
 )
 
 if __name__ == "__main__":
-    run = config.launch(worker=runpod_worker(), detach=True)
+    run = config.launch(open=True)
     print(run.training_run_id)
-    print(run.dashboard_url)
-    run.result()
+    print(run.dashboard_url or run.inspect_hint)
+    if run.dashboard_url:
+        run.wait_dashboard()  # keep the tunnel up; Ctrl+C when done

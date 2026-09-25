@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,16 @@ class LaunchPlan:
 _MODEL_ARGS_MARKER = "__DAYTONA_GYM_MODEL_ARGS__"
 
 
+def default_worker_id() -> str:
+    """Stable-ish BYO worker id: explicit env, else provider pod id, else hostname."""
+    explicit = os.environ.get("DAYTONA_WORKER_ID")
+    if explicit:
+        return explicit
+    host = socket.gethostname()
+    pod = os.environ.get("RUNPOD_POD_ID")
+    return f"runpod:{pod}" if pod else host
+
+
 def build_runtime_env(
     *,
     megatron_root: Path,
@@ -61,6 +72,7 @@ def build_runtime_env(
         "DAYTONA_REQUIRE_PASSING_TESTS": "1" if recipe.require_passing_tests else "0",
         "DAYTONA_ALLOW_ABORTED": "1" if recipe.allow_aborted else "0",
         "DAYTONA_RUN_ID": run_id,
+        "DAYTONA_WORKER_ID": default_worker_id(),
     }
     optional: list[tuple[str, float | int | None]] = [
         ("DAYTONA_TIMEOUT_SECONDS", recipe.timeout_seconds),

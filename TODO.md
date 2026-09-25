@@ -33,7 +33,9 @@ python examples/gym_sdk/quickstart.py
 
 ---
 
-### Next
+### Next — see `ROADMAP.md`
+
+The phased plan in `ROADMAP.md` supersedes the list below (kept for history).
 
 1. ~~Dogfood `launch()` on H100~~ — **done** (Gym SDK on RunPod).
 2. ~~Wire `TrainingRun` → live dash URL~~ — **done** (`launch(open=True)` / `run.open()`).

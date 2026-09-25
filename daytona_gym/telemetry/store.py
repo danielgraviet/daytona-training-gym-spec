@@ -354,6 +354,7 @@ def reconstruct_rollout(store: TelemetryStore, rollout_id: str) -> tuple[Timelin
 _SPAN_CATEGORIES = {
     "inference.generate": "inference",
     "sandbox.provision": "sandbox",
+    "sandbox.seed": "sandbox",
     "sandbox.finalize": "sandbox",
     "reward.compute": "reward",
 }
