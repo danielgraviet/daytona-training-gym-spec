@@ -69,6 +69,8 @@ def test_low_ram_warning(monkeypatch, capsys) -> None:
     monkeypatch.setattr(launch, "host_ram_bytes", lambda: 15 * 1024**3)
     launch.warn_if_low_host_ram()
     assert "15 GiB" in capsys.readouterr().out
+    launch.warn_if_low_host_ram(offload_train=False)  # already on the fix
+    assert capsys.readouterr().out == ""
     monkeypatch.setattr(launch, "host_ram_bytes", lambda: 64 * 1024**3)
     launch.warn_if_low_host_ram()
     assert capsys.readouterr().out == ""

@@ -187,7 +187,7 @@ def execute_plan(
         working_dir=plan.slime_root,
     )
 
-    warn_if_low_host_ram()
+    warn_if_low_host_ram(offload_train="--no-offload-train" not in plan.train_argv)
     _reset_ray(num_gpus=1, on_phase=on_phase)
     env = os.environ.copy()
     env.update(plan.host_env)
@@ -449,17 +449,22 @@ def ray_object_store_bytes() -> int | None:
     return None
 
 
-def warn_if_low_host_ram(num_gpus: int = 1) -> None:
-    """Colocated Slime keeps weights + optimizer state in (pinned) CPU RAM."""
+def warn_if_low_host_ram(*, offload_train: bool = True) -> None:
+    """Colocated Slime keeps weights + optimizer state in (pinned) CPU RAM.
+
+    Silent when the recipe keeps the trainer on the GPU (offload_train=False):
+    that is the fix for small-RAM boxes, so warning would be misleading.
+    """
     ram = host_ram_bytes()
-    if ram is None or ram >= SMALL_HOST_RAM_BYTES:
+    if not offload_train or ram is None or ram >= SMALL_HOST_RAM_BYTES:
         return
     print(
         f"host RAM: WARNING — this machine has {ram / 1024**3:.0f} GiB. Colocated Slime moves "
         "model weights and optimizer state into CPU RAM between steps; below ~32 GiB the "
         "kernel may OOM-kill the trainer. Ray's object store is capped at "
-        f"{(ray_object_store_bytes() or 0) / 1024**3:.0f} GiB; use the smallest model, "
-        "and add swap for headroom.",
+        f"{(ray_object_store_bytes() or 0) / 1024**3:.0f} GiB. Fix: keep both engines on the "
+        "GPU with a recipe that sets offload_train=False, offload_rollout=False (see "
+        "examples/gym_sdk/box_worker.py).",
         flush=True,
     )
 
