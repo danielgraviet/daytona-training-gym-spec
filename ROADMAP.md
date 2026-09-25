@@ -210,6 +210,14 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
   - Found + fixed on the way: non-editable installs of this package failed
     (duplicate `force-include` of `dashboard_static` in `pyproject.toml`); every
     pod install had used `pip install -e .`, which masked it.
+- [x] **Issues found during the live run (fixed).**
+  - Missing `DAYTONA_API_KEY` was detected only after model prep → now checked right after planning.
+  - `dg` didn't auto-load `.env` → every `dg` command loads `./.env` then the repo `.env`.
+  - Runs list "updated Ns ago" reset every poll (heartbeat time) → "running for 6m" / "finished 3m ago".
+  - Run page kept "Initializing Megatron…" through training → "Training — step 2/4 (N rollouts)" from telemetry (`num_steps` in `run.meta`).
+  - Redeploy kept old code (pip saw `@main` as satisfied; server never restarted) → pinned to commit, force-reinstall, restart.
+  - Restart failed because the old Daytona session had exited (ingest was down ~1 min) → fresh session per start.
+  - Unit tests read the developer's `.env` and shipped two fake runs (`run_worker_test`, `run_testgym`) to the real ingest host → tests are hermetic (`DAYTONA_GYM_NO_DOTENV=1` fixture).
 - [ ] **Ingest sandbox follow-ups.**
   - [ ] Auto-restart `dg ingest` after a sandbox restart — try an image
     `ENTRYPOINT` (verify it coexists with Daytona's toolbox daemon); fallback is
@@ -218,11 +226,14 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
     (snapshot-based create can't set resources; 3 GB ≈ hundreds of runs).
   - [ ] Periodic backup tarball of the data dir to a Daytona Volume (volumes are
     object-storage backed — backup target only, not the live store).
-  - [ ] Pin `--spec` to a release/sha instead of `@main` for repeatable deploys.
+  - [x] Pin to a commit instead of `@main` (`--ref`, resolved via `git ls-remote`).
+  - [ ] Delete runs from the ingest host (`dg ingest rm <run>`), e.g. the two leaked test runs.
 - [ ] **Phase 2 exit — verified live on RunPod.** Done when:
-  - [ ] `dg ingest deploy --daytona` (HTTPS preview URL + token), env exported on laptop and pod
-  - [ ] `python main.py` on the A100 prints the ingest URL (not trycloudflare / 127.0.0.1)
-  - [ ] dashboard updates live during training from the ingest host
+  - [x] `dg ingest deploy --daytona` (HTTPS preview URL + token), env exported on laptop and pod
+  - [x] `python main.py` on the A100 prints the ingest URL (not trycloudflare / 127.0.0.1)
+  - [x] dashboard updates live during training from the ingest host; terminal
+    status ships (`run_b959a18c…` → completed, 32 rollouts, 2026-09-25)
+  - [x] failure path ships too (`run_649d9aca…` → failed: missing `DAYTONA_API_KEY`)
   - [ ] terminate the pod mid-run → run stays browsable, shows `worker_lost` within ~90s
   - [ ] laptop `launch(worker=runpod_worker(), detach=True)` + `run.wait()` works with no PTY sync
 
