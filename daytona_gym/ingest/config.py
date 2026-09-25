@@ -34,6 +34,26 @@ class IngestConfig:
             return None
         return cls(url=url, token=token)
 
+    @classmethod
+    def require_consistent_env(cls) -> IngestConfig | None:
+        """Like :meth:`from_env`, but half a config is an error, not "off".
+
+        Regression: a pod with only one of the two variables silently fell back
+        to a local tunnel and the run never reached the ingest host.
+        """
+        url = bool((os.environ.get(INGEST_URL_ENV) or "").strip())
+        token = bool((os.environ.get(INGEST_TOKEN_ENV) or "").strip())
+        if url != token:
+            from daytona_gym.runtime.errors import DaytonaError, ErrorCode
+
+            missing = INGEST_TOKEN_ENV if url else INGEST_URL_ENV
+            raise DaytonaError(
+                ErrorCode.USER_CODE_ERROR,
+                f"{missing} is not set but its pair is — set both "
+                f"{INGEST_URL_ENV} and {INGEST_TOKEN_ENV} (or neither) and relaunch.",
+            )
+        return cls.from_env()
+
     def run_url(self, run_id: str) -> str:
         return f"{self.url}/run/{run_id}"
 

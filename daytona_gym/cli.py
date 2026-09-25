@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
             "  dg ingest          durable run history + dashboard (workers ship here)\n"
             "  dg ingest deploy --daytona   run it in a long-lived Daytona sandbox\n"
             "  dg ingest rm RUN   delete a run from the ingest host\n"
+            "  dg ingest push runs/ID.jsonl   backfill a run that wasn't shipped\n"
             "  dg run main.py     run a Modal-shaped train script (or uv run)\n"
             "  dg run list|status|logs|wait|stop\n"
             "  dg skills install  install agent skill bundle\n"
@@ -57,6 +58,10 @@ def main(argv: list[str] | None = None) -> int:
 
         return dash_main(args[1:])
     if args and args[0] == "ingest":
+        if args[1:2] == ["push"]:
+            from daytona_gym.ingest.server import push_main
+
+            return push_main(args[2:])
         if args[1:2] == ["rm"]:
             from daytona_gym.ingest.server import rm_main
 

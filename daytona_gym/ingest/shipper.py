@@ -268,14 +268,51 @@ def _json(raw: bytes) -> dict[str, Any]:
 
 
 def start_shipper_from_env(telemetry_path: str | Path, run_id: str) -> TelemetryShipper | None:
-    """Start a shipper when ``DAYTONA_GYM_INGEST_URL`` + token are set; else None."""
-    config = IngestConfig.from_env()
+    """Start a shipper when ``DAYTONA_GYM_INGEST_URL`` + token are set; else None.
+
+    Always says which mode the run is in — a silent fallback once made a run
+    look "stale" on the ingest dashboard while it only existed on the pod.
+    Half a config raises (see ``IngestConfig.require_consistent_env``).
+    """
+    config = IngestConfig.require_consistent_env()
     if config is None:
+        print(
+            "ingest: OFF — run history stays on this machine "
+            "(set DAYTONA_GYM_INGEST_URL + DAYTONA_GYM_INGEST_TOKEN to ship it; "
+            "backfill later with `dg ingest push runs/<id>.jsonl`)",
+            flush=True,
+        )
         return None
     try:
         shipper = TelemetryShipper(config, telemetry_path=telemetry_path, run_id=run_id)
     except ValueError as exc:
         print(f"ingest disabled: {exc}", flush=True)
         return None
-    print(f"shipping telemetry → {config.run_url(run_id)}", flush=True)
+    print(f"ingest: shipping telemetry → {config.run_url(run_id)}", flush=True)
     return shipper.start()
+
+
+def push_files(paths: list[Path], *, config: IngestConfig, timeout: float = 600.0) -> int:
+    """Backfill finished runs (telemetry + progress) to the ingest host.
+
+    Idempotent: the server's offset check means re-pushing a run that already
+    arrived sends nothing new.
+    """
+    rc = 0
+    for path in paths:
+        run_id = path.name[: -len(".jsonl")] if path.name.endswith(".jsonl") else path.stem
+        if not path.is_file():
+            print(f"{path}: not found")
+            rc = 1
+            continue
+        try:
+            shipper = TelemetryShipper(config, telemetry_path=path, run_id=run_id)
+            deadline = time.monotonic() + timeout
+            while shipper.ship_once():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("push timed out")
+            print(f"pushed {run_id}: {shipper.bytes_shipped} bytes → {config.run_url(run_id)}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"{run_id}: push failed: {exc}")
+            rc = 1
+    return rc

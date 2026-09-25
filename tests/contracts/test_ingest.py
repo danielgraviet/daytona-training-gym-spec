@@ -307,3 +307,34 @@ def test_rm_deletes_a_run_with_auth_only(ingest, tmp_path, monkeypatch) -> None:
     assert rm_main(["run_ship", "--yes"]) == 0
     assert not any(data.glob("run_ship*"))
     assert rm_main(["run_ship", "--yes"]) == 1  # already gone → 404
+
+
+def test_half_ingest_config_fails_loudly_and_off_is_announced(tmp_path, monkeypatch, capsys) -> None:
+    """Regression: a pod with one of the two vars silently used a local tunnel."""
+    from daytona_gym.ingest.shipper import start_shipper_from_env
+    from daytona_gym.runtime.errors import DaytonaError
+
+    path, _ = _worker_files(tmp_path)
+    assert start_shipper_from_env(path, "run_ship") is None
+    assert "ingest: OFF" in capsys.readouterr().out
+
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_URL", "https://gym.example.com")
+    with pytest.raises(DaytonaError, match="DAYTONA_GYM_INGEST_TOKEN is not set"):
+        start_shipper_from_env(path, "run_ship")
+
+
+def test_push_backfills_finished_run_idempotently(ingest, tmp_path, capsys) -> None:
+    from daytona_gym.ingest.shipper import push_files
+
+    url, data = ingest
+    path, runs = _worker_files(tmp_path, "run_backfill")
+    path.write_text("".join(_span(i) + "\n" for i in range(5)))
+    write_progress(runs, "run_backfill", phase="completed", message="done", status="completed", done=True)
+    cfg = IngestConfig(url=url, token=TOKEN)
+
+    assert push_files([path], config=cfg) == 0
+    assert (data / "run_backfill.jsonl").read_bytes() == path.read_bytes()
+    assert json.loads((data / "run_backfill.progress.json").read_text())["status"] == "completed"
+    assert push_files([path], config=cfg) == 0  # second push: nothing new, no dupes
+    assert (data / "run_backfill.jsonl").read_bytes() == path.read_bytes()
+    assert "pushed run_backfill" in capsys.readouterr().out

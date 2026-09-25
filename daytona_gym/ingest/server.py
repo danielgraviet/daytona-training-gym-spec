@@ -347,6 +347,24 @@ def serve(data_dir: Path, *, host: str, port: int, token: str | None) -> Threadi
     return ThreadingHTTPServer((host, port), make_handler(store, token=token))
 
 
+def push_main(argv: list[str]) -> int:
+    """``dg ingest push runs/<id>.jsonl…`` — backfill runs to the ingest host."""
+    from daytona_gym.ingest.config import IngestConfig
+    from daytona_gym.ingest.shipper import push_files
+
+    parser = argparse.ArgumentParser(
+        prog="dg ingest push",
+        description="Backfill run telemetry + progress to the ingest host (safe to repeat).",
+    )
+    parser.add_argument("paths", nargs="+", type=Path, help="runs/<id>.jsonl files")
+    args = parser.parse_args(argv)
+    cfg = IngestConfig.from_env()
+    if cfg is None:
+        print("set DAYTONA_GYM_INGEST_URL and DAYTONA_GYM_INGEST_TOKEN (or put them in .env)", file=sys.stderr)
+        return 2
+    return push_files(args.paths, config=cfg)
+
+
 def rm_main(argv: list[str]) -> int:
     """``dg ingest rm <run>…`` — delete runs from the configured ingest host."""
     import urllib.error

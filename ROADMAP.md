@@ -220,6 +220,7 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
   - Run page kept "Initializing Megatron…" through training → "Training — step 2/4 (N rollouts)" from telemetry (`num_steps` in `run.meta`).
   - Redeploy kept old code (pip saw `@main` as satisfied; server never restarted) → pinned to commit, force-reinstall, restart.
   - Restart failed because the old Daytona session had exited (ingest was down ~1 min) → fresh session per start.
+  - New pod, run `run_ecc7eb0c…`: ingest vars not in the launch shell → launch silently fell back to a Cloudflare tunnel and never shipped → every launch now prints `ingest: shipping …` or `ingest: OFF …`, half a config fails fast, and `dg ingest push runs/<id>.jsonl` backfills missed runs (idempotent).
   - Unit tests read the developer's `.env` and shipped two fake runs (`run_worker_test`, `run_testgym`) to the real ingest host → tests are hermetic (`DAYTONA_GYM_NO_DOTENV=1` fixture).
 - [ ] **Ingest sandbox follow-ups.**
   - [ ] Auto-restart `dg ingest` after a sandbox restart — try an image
