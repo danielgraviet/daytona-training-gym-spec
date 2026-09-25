@@ -184,3 +184,42 @@ def test_launch_open_false_skips_dashboard(tmp_path: Path, monkeypatch) -> None:
     assert run.returncode == 0
     assert opened["n"] == 0
     assert run.dashboard_url is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "explicit", "expect_share"),
+    [
+        ("runpod", None, True),  # on-pod launch: loopback is unreachable → tunnel
+        ("ssh", None, True),
+        ("local", None, False),  # laptop: stay on loopback
+        ("runpod", False, False),  # laptop-driven remote_job opts out explicitly
+    ],
+)
+def test_open_shares_by_default_only_on_gpu_boxes(
+    tmp_path: Path, monkeypatch, kind: str, explicit, expect_share: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from daytona_gym.gym.run import TrainingRun
+    from daytona_gym.telemetry.dashboard import ServeContext
+
+    seen: dict = {}
+
+    def fake_start(**kwargs):  # noqa: ANN003
+        seen.update(kwargs)
+        return SimpleNamespace(url="https://x.trycloudflare.com/", local_url="http://127.0.0.1:3000/", stop=lambda: None)
+
+    monkeypatch.setattr("daytona_gym.telemetry.dashboard.start_dashboard", fake_start)
+    monkeypatch.setattr(
+        "daytona_gym.telemetry.dashboard.detect_serve_context", lambda: ServeContext(kind)
+    )
+    run = TrainingRun(
+        run_id="r",
+        telemetry_path=str(tmp_path / "runs" / "r.jsonl"),
+        command=[],
+        env={},
+        runtime_env={},
+    )
+    url = run.open(share=explicit)
+    assert seen["share"] is expect_share
+    assert url.startswith("https://") is expect_share

@@ -60,19 +60,25 @@ class TrainingRun:
         port: int = 3000,
         open_browser: bool = False,
     ) -> str:
-        """Start the live dashboard on loopback (Cloudflare only if ``share=True``).
+        """Start the live dashboard and return a URL deep-linked to this run.
 
-        Returns a URL deep-linked to this run when possible. Keeps serving in
-        the background until ``close_dashboard()`` / ``wait_dashboard()`` / process exit.
-        Prefer laptop ``dg dash`` (auto RunPod sync) over worker tunnels.
+        ``share=None`` (default) picks by context: on a GPU box (RunPod / SSH
+        session) a loopback URL is unreachable from the user's browser, so a
+        Cloudflare quick tunnel is started; on a laptop it stays on loopback.
+        Laptop-driven remote launches pass ``share=False`` explicitly because
+        the laptop serves its own synced dashboard. Keeps serving in the
+        background until ``close_dashboard()`` / ``wait_dashboard()`` / exit.
         """
         if self._dashboard is not None and self.dashboard_url:
             return self.dashboard_url
 
-        from daytona_gym.telemetry.dashboard import start_dashboard
+        from daytona_gym.telemetry.dashboard import detect_serve_context, start_dashboard
 
         runs_dir = Path(self.telemetry_path).expanduser().resolve().parent
-        want_share = bool(share)
+        if share is None:
+            want_share = detect_serve_context().kind in {"runpod", "ssh"}
+        else:
+            want_share = bool(share)
         handle = start_dashboard(
             runs_dir=runs_dir,
             port=port,
