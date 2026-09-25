@@ -18,7 +18,8 @@ permissions:
 
 concurrency:
   group: worker-image
-  cancel-in-progress: true
+  # Queue instead of cancel: a 21 GB push should never be thrown away mid-upload.
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -26,6 +27,7 @@ jobs:
     timeout-minutes: 150
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/daytona-gym-worker
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Free disk space
         run: |
@@ -57,6 +59,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Build
         run: docker build -f docker/worker/Dockerfile -t "$IMAGE:${GITHUB_SHA}" -t "$IMAGE:latest" .
 
@@ -70,8 +79,21 @@ jobs:
           print('ok', daytona_gym.__version__)"
           docker run --rm "$IMAGE:${GITHUB_SHA}" dg --help | head -3
 
-      - name: Push
+      # Docker Hub first: the slimerl/slime base already lives there, so the push
+      # mounts those layers from slimerl/slime and uploads only the gym layer.
+      - name: Push to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        run: |
+          HUB="docker.io/${DOCKERHUB_USERNAME}/daytona-gym-worker"
+          docker tag "$IMAGE:${GITHUB_SHA}" "$HUB:${GITHUB_SHA}"
+          docker tag "$IMAGE:${GITHUB_SHA}" "$HUB:latest"
+          docker push "$HUB:${GITHUB_SHA}"
+          docker push "$HUB:latest"
+          echo "pushed $HUB:${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push to GHCR
         run: |
           docker push "$IMAGE:${GITHUB_SHA}"
           docker push "$IMAGE:latest"
+          echo "pushed $IMAGE:${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
           df -h /mnt
