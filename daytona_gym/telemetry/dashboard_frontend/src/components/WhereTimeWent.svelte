@@ -125,9 +125,9 @@
         <p class="muted m-0 text-xs">p50 {fmtSecs(totals.sandbox_provision?.p50)} · n={totals.sandbox_provision?.n}</p>
       </div>
       <div class="panel p-3" title={defs.bottleneck}>
-        <p class="muted m-0 text-xs uppercase tracking-wide">Bottleneck</p>
-        <p class="m-0 text-2xl font-semibold {totals.bottleneck === 'environment' ? 'warn' : ''}">
-          {totals.bottleneck}
+        <p class="muted m-0 text-xs uppercase tracking-wide">Biggest cost</p>
+        <p class="m-0 text-xl font-semibold {totals.bottleneck === 'environment' || totals.bottleneck === 'overhead' ? 'warn' : ''}">
+          {totals.bottleneck_label || totals.bottleneck}
           <span class="muted text-sm font-normal">{pct(totals.bottleneck_share)}</span>
         </p>
         {#if split.length}
@@ -135,15 +135,20 @@
             {#each split as part}
               <span
                 style="width: {part.share * 100}%; background: {part.color}"
-                title="{part.name}: {fmtSecs(part.seconds)} ({pct(part.share)})"
+                title="{part.label || part.name}: {fmtSecs(part.seconds)} ({pct(part.share)})"
               ></span>
             {/each}
           </div>
-          <p class="muted m-0 mt-1 text-xs">
-            {#each split as part, i}{i ? ' · ' : ''}{part.name} {pct(part.share)}{/each}
-          </p>
-          <p class="muted m-0 text-xs" title={totals.trainer_source === 'slime' ? defs.slime_step : defs.train_phase_seconds}>
-            trainer: {totals.trainer_source === 'slime' ? "Slime's perf numbers" : 'derived from step gaps'}
+          <ul class="muted m-0 mt-1 list-none p-0 text-xs">
+            {#each split as part}
+              <li>
+                <span class="legend" style="background: {part.color}"></span>
+                {part.label || part.name} {pct(part.share)}
+              </li>
+            {/each}
+          </ul>
+          <p class="muted m-0 mt-1 text-xs" title={totals.trainer_source === 'slime' ? defs.slime_step : defs.train_phase_seconds}>
+            training split from {totals.trainer_source === 'slime' ? "Slime's own step timings" : 'gaps between steps (estimate)'}
           </p>
         {/if}
         {#if totals.n_failed}
@@ -153,6 +158,17 @@
         {/if}
       </div>
     </div>
+
+    {#if totals.bottleneck_explain}
+      <div class="panel mb-3 px-3 py-2 text-sm">
+        <strong>What this means:</strong>
+        {pct(totals.bottleneck_share)} of step time was <em>{totals.bottleneck_label}</em>.
+        {totals.bottleneck_explain}
+        {#if totals.bottleneck_hint}
+          <span class="muted"> → {totals.bottleneck_hint}</span>
+        {/if}
+      </div>
+    {/if}
 
     {#if domain}
       <div class="panel mb-3 p-3">
@@ -236,7 +252,7 @@
               {#if hasSlime}
                 <th class="px-3 py-2 font-medium" title={defs.slime_step}>Slime step</th>
                 <th class="px-3 py-2 font-medium" title={defs.slime_step}>train</th>
-                <th class="px-3 py-2 font-medium" title={defs.overhead_seconds}>overhead</th>
+                <th class="px-3 py-2 font-medium" title={defs.overhead_seconds}>switching</th>
               {:else}
                 <th class="px-3 py-2 font-medium" title={defs.train_phase_seconds}>train (derived)</th>
               {/if}

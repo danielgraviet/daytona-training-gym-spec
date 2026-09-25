@@ -42,6 +42,38 @@ from daytona_gym.telemetry.store import (
 DEFAULT_STEP_GAP_SECONDS = 1.0
 FAILED_STATUSES = frozenset({"failed", "aborted", "cancelled"})
 
+# Plain-language names + "what to do" for each part of a step. Keys stay stable
+# for the API; these are what people read.
+BUCKETS: dict[str, dict[str, str]] = {
+    "environment": {
+        "label": "waiting on sandboxes",
+        "explain": "The GPU sat idle while Daytona sandboxes ran tools / tests or started up.",
+        "hint": "Check the slowest tools and sandbox start-up p95 below; a prebuilt "
+        "snapshot cuts start-up, and tighter tool timeouts cut stragglers.",
+    },
+    "inference": {
+        "label": "generating",
+        "explain": "The model was producing tokens for at least one rollout.",
+        "hint": "Generation-bound: shorten max_response_len, cap turns, or give "
+        "inference more GPU.",
+    },
+    "trainer": {
+        "label": "training",
+        "explain": "The trainer was computing gradients and updating weights.",
+        "hint": "Training-bound — usually what you want; scale GPUs or batch size "
+        "if steps are too slow.",
+    },
+    "overhead": {
+        "label": "switching generate ↔ train",
+        "explain": "One GPU takes turns generating and training: each step it "
+        "unloads one engine, loads the other, and copies the new weights across. "
+        "That switching does no useful work.",
+        "hint": "The switch costs about the same every step, so do more work per "
+        "step (raise batch_size / n_samples, longer tasks) — or give generation "
+        "and training separate GPUs (non-colocated) to avoid it.",
+    },
+}
+
 DEFINITIONS: dict[str, str] = {
     "env_wait_seconds": (
         "Time inside a step's rollout phase when no inference request was in "
@@ -66,9 +98,10 @@ DEFINITIONS: dict[str, str] = {
         "train = step_time × (1 − wait_time_ratio); wait = the rest."
     ),
     "overhead_seconds": (
-        "Slime wait minus the Daytona-observed rollout phase: time the trainer "
-        "waited on something other than rollouts — engine offload/onload, weight "
-        "sync, scheduling. Estimate (two clocks, clamped at 0)."
+        "Switching generate ↔ train: Slime's wait minus the Daytona-observed "
+        "rollout phase — time the trainer waited on something other than "
+        "rollouts. In colocated mode that is mostly unloading/loading the two "
+        "engines and copying weights; also scheduling. Estimate (clamped at 0)."
     ),
     "bottleneck": (
         "Run-level: the largest bucket summed over steps — environment (GPU idle "
@@ -434,8 +467,15 @@ def analyze_run(
         "bottleneck_share": (
             breakdown[bottleneck] / breakdown_sum if breakdown_sum > 0 else 0.0
         ),
+        "bottleneck_label": BUCKETS.get(bottleneck, {}).get("label", bottleneck),
+        "bottleneck_explain": BUCKETS.get(bottleneck, {}).get("explain", ""),
+        "bottleneck_hint": BUCKETS.get(bottleneck, {}).get("hint", ""),
         "time_breakdown": {
-            k: {"seconds": v, "share": (v / breakdown_sum) if breakdown_sum > 0 else 0.0}
+            k: {
+                "seconds": v,
+                "share": (v / breakdown_sum) if breakdown_sum > 0 else 0.0,
+                "label": BUCKETS.get(k, {}).get("label", k),
+            }
             for k, v in breakdown.items()
         },
         "sandbox_provision": {

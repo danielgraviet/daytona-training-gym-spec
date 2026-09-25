@@ -235,14 +235,19 @@ def _print_analysis(
     print()
     print(
         f"where time went  ({totals['n_steps']} step(s), "
-        f"bottleneck={totals['bottleneck']} {totals['bottleneck_share']:.0%})"
+        f"biggest cost: {totals['bottleneck_label']} {totals['bottleneck_share']:.0%})"
     )
+    if totals.get("bottleneck_explain"):
+        print(f"  {totals['bottleneck_explain']}")
+    if totals.get("bottleneck_hint"):
+        print(f"  → {totals['bottleneck_hint']}")
     parts = totals["time_breakdown"]
     source = "Slime perf" if totals.get("trainer_source") == "slime" else "derived gap"
     print(
         f"  step time split ({source}) ".ljust(28)
         + "  ".join(
-            f"{name} {_fmt_secs(v['seconds'])} ({v['share']:.0%})" for name, v in parts.items()
+            f"{v.get('label', name)} {_fmt_secs(v['seconds'])} ({v['share']:.0%})"
+            for name, v in parts.items()
         )
     )
     print(
@@ -280,7 +285,7 @@ def _print_analysis(
         has_slime = any(s.get("slime") for s in out["steps"])
         print()
         head = "  step  rollouts  phase     env-wait  straggler  rollout-bound"
-        print(head + ("    slime-step  train     overhead" if has_slime else ""))
+        print(head + ("    slime-step  train     switching" if has_slime else ""))
         for s in out["steps"][-10:]:
             row = (
                 f"  {s['step']:>4}  {s['n_rollouts']:>8}  {_fmt_secs(s['rollout_phase_seconds']):>8}"
