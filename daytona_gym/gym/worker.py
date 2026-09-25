@@ -42,6 +42,8 @@ _FORWARD_ENV_KEYS = (
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
     "HF_HUB_TOKEN",
+    "DAYTONA_GYM_INGEST_URL",
+    "DAYTONA_GYM_INGEST_TOKEN",
 )
 
 
@@ -215,8 +217,19 @@ def _start_laptop_dash_for_run(
     dash_port: int = 3000,
     worker_log: str | None = None,
 ) -> tuple[str, Any]:
-    """Start localhost dash + PtyShell sync; return deep URL and handle."""
+    """Start localhost dash + PtyShell sync; return deep URL and handle.
+
+    With ``DAYTONA_GYM_INGEST_URL`` set the worker ships telemetry to the
+    ingest host, so the laptop just links there (no PTY sync, no local server).
+    """
     from daytona_gym.gym.console_ui import banner_open
+    from daytona_gym.ingest.config import IngestConfig
+
+    ingest = IngestConfig.from_env()
+    if ingest is not None:
+        deep = ingest.run_url(run_id)
+        banner_open(deep)
+        return deep, None
     from daytona_gym.telemetry.dashboard import start_dashboard
     from daytona_gym.telemetry.dashboard_sync import (
         sync_run_live_via_pty,

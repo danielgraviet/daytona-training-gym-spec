@@ -476,13 +476,12 @@ def _overview_snapshot(runs_dir: Path) -> dict[str, Any]:
 
 
 def _resolve_run(runs_dir: Path, stem: str) -> Path:
-    candidate = runs_dir / f"{stem}.jsonl"
-    if candidate.is_file():
-        return candidate
-    # allow full filename
-    alt = runs_dir / stem
-    if alt.is_file():
-        return alt
+    root = Path(runs_dir).resolve()
+    for candidate in (root / f"{stem}.jsonl", root / stem):  # stem or full filename
+        resolved = candidate.resolve()
+        # Served from a public ingest host too: never escape the runs dir.
+        if resolved.parent == root and resolved.suffix == ".jsonl" and resolved.is_file():
+            return resolved
     raise FileNotFoundError(f"run not found: {stem}")
 
 
@@ -800,9 +799,14 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
             status = "running"
         else:
             status = "running" if phase else "pending"
+    lived = data.apply_liveness(runs_dir, stem, status)
+    if lived == "worker_lost" and status != "worker_lost":
+        status = "worker_lost"
+        message = "Worker stopped reporting (pod gone?) — showing telemetry up to that point"
+        failed = True
     done = bool(
         prog.get("done")
-        or status in {"completed", "failed"}
+        or status in {"completed", "failed", "worker_lost"}
         or phase in {"completed", "failed"}
     )
     # Only promote phase to "live" while still actively running.

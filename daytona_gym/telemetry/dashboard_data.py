@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,23 @@ def infer_status_without_progress(path: Path, *, has_rollouts: bool) -> str:
     return "stale" if idle >= STALE_AFTER_SECONDS else "running"
 
 
+TERMINAL_STATUSES = frozenset({"completed", "failed", "worker_lost"})
+
+
+def apply_liveness(runs_dir: Path, stem: str, status: str) -> str:
+    """On an ingest host, a non-terminal run whose worker went quiet is lost."""
+    if status in TERMINAL_STATUSES:
+        return status
+    from daytona_gym.ingest.config import WORKER_LOST_AFTER_SECONDS
+
+    try:
+        meta = json.loads((Path(runs_dir) / f"{stem}.ingest.json").read_text(encoding="utf-8"))
+        last_seen = float(meta["last_seen"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return status
+    return "worker_lost" if time.time() - last_seen >= WORKER_LOST_AFTER_SECONDS else status
+
+
 def _progress_status(runs_dir: Path, stem: str) -> dict[str, Any]:
     prog = run_progress.read_progress(runs_dir, stem) or {}
     phase = str(prog.get("phase") or "")
@@ -51,7 +69,7 @@ def _progress_status(runs_dir: Path, stem: str) -> dict[str, Any]:
         else:
             status = "pending"
     return {
-        "run_status": status,
+        "run_status": apply_liveness(runs_dir, stem, status),
         "phase": phase or None,
         "progress_message": prog.get("message"),
         "progress_updated_at": prog.get("updated_at"),
@@ -86,6 +104,7 @@ def list_run_files(runs_dir: Path) -> list[dict[str, Any]]:
                 item["run_status"] = infer_status_without_progress(path, has_rollouts=bool(ids))
             elif ids:
                 item["run_status"] = "running"
+            item["run_status"] = apply_liveness(runs_dir, path.stem, item["run_status"])
             out.append(item)
         except Exception as exc:  # noqa: BLE001 — one bad file shouldn't kill the list
             out.append(

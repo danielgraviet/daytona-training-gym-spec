@@ -30,7 +30,7 @@
 
   function statusClass(s) {
     if (s === 'completed') return 'ok';
-    if (s === 'failed') return 'bad';
+    if (s === 'failed' || s === 'worker_lost') return 'bad';
     if (s === 'running') return 'warn';
     return 'muted';
   }

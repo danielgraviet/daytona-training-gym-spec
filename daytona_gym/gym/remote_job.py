@@ -115,6 +115,7 @@ def _run_supervised(payload: dict) -> int:
         detached=True,
     )
 
+    shipper = None
     try:
         for key, val in (payload.get("forward_env") or {}).items():
             if isinstance(key, str) and isinstance(val, str) and val:
@@ -133,6 +134,9 @@ def _run_supervised(payload: dict) -> int:
         stem = plan.run_id
 
         set_phase("starting", "Plan built — preparing model weights")
+        from daytona_gym.ingest.shipper import start_shipper_from_env
+
+        shipper = start_shipper_from_env(plan.telemetry_path, plan.run_id)
 
         run = TrainingRun(
             run_id=plan.run_id,
@@ -226,6 +230,9 @@ def _run_supervised(payload: dict) -> int:
             print(f"Training complete: {run.training_run_id}", flush=True)
         else:
             print(f"Training failed: {run.training_run_id} (exit={rc})", flush=True)
+        if shipper is not None:
+            shipper.stop()  # drain final status before blocking on the dash
+            shipper = None
         if dashboard:
             run.wait_dashboard()
         return rc
@@ -279,6 +286,9 @@ def _run_supervised(payload: dict) -> int:
         print(f"Training failed: {stem}", flush=True)
         print("__DG_RETURNCODE__=2", flush=True)
         return 2
+    finally:
+        if shipper is not None:
+            shipper.stop()  # ship the terminal status written above
 
 
 def _print_markers(

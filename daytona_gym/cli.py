@@ -7,6 +7,7 @@ Examples:
   dg dash
   dg open
   dg run main.py
+  dg ingest
   dg run list|status|logs|wait|stop
   dg skills install
   dg inspect
@@ -33,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
             "  dg dash --port N   optional port (default 3000)\n"
             "  dg dash --share    optional public Cloudflare tunnel\n"
             "  dg dash --remote USER@HOST   escape hatch (non-RunPod SSH)\n"
+            "  dg ingest          durable run history + dashboard (workers ship here)\n"
             "  dg run main.py     run a Modal-shaped train script (or uv run)\n"
             "  dg run list|status|logs|wait|stop\n"
             "  dg skills install  install agent skill bundle\n"
@@ -49,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
         from daytona_gym.telemetry.dashboard import main as dash_main
 
         return dash_main(args[1:])
+    if args and args[0] == "ingest":
+        from daytona_gym.ingest.server import main as ingest_main
+
+        return ingest_main(args[1:])
     if args and args[0] == "run":
         from daytona_gym.gym.run_cli import main as run_main
 

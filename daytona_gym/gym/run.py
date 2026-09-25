@@ -72,6 +72,16 @@ class TrainingRun:
         if self._dashboard is not None and self.dashboard_url:
             return self.dashboard_url
 
+        # Durable history configured: the ingest host already serves this run
+        # (and keeps it after the pod dies) — no local server, no tunnel.
+        from daytona_gym.ingest.config import IngestConfig
+
+        ingest = IngestConfig.from_env()
+        if ingest is not None and share is not True:
+            self.dashboard_url = ingest.run_url(self.training_run_id)
+            self.inspect_hint = f"dg stats {self.telemetry_path}  |  {self.dashboard_url}"
+            return self.dashboard_url
+
         from daytona_gym.telemetry.dashboard import detect_serve_context, start_dashboard
 
         runs_dir = Path(self.telemetry_path).expanduser().resolve().parent
@@ -274,10 +284,16 @@ class TrainingRun:
 
     @staticmethod
     def _http_json(url: str) -> dict[str, Any] | None:
+        from daytona_gym.ingest.config import IngestConfig
+
+        headers = {"User-Agent": "daytona-gym/0.1", "Cache-Control": "no-store"}
+        ingest = IngestConfig.from_env()
+        if ingest is not None and url.startswith(ingest.url + "/"):
+            headers.update(ingest.auth_headers())  # only ever sent to the ingest host
         try:
             req = urllib.request.Request(
                 url + (("&" if "?" in url else "?") + f"t={int(time.time())}"),
-                headers={"User-Agent": "daytona-gym/0.1", "Cache-Control": "no-store"},
+                headers=headers,
             )
             with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
                 raw = resp.read().decode("utf-8", errors="replace")
@@ -289,7 +305,7 @@ class TrainingRun:
     def _apply_snapshot(self, snap: dict[str, Any]) -> None:
         status = snap.get("status")
         phase = str(snap.get("phase") or "")
-        if snap.get("failed") or status == "failed" or phase == "failed":
+        if snap.get("failed") or status in {"failed", "worker_lost"} or phase == "failed":
             self.status = "failed"
             if snap.get("returncode") is not None:
                 self.returncode = int(snap["returncode"])

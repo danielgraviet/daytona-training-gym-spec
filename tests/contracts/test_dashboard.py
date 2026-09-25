@@ -360,3 +360,20 @@ def test_slice_marked_block_error_is_readable() -> None:
 
     with pytest.raises(RuntimeError, match="missing begin marker"):
         _slice_marked_block("short", "__B__", "__E__")
+
+
+def test_resolve_run_never_escapes_runs_dir(tmp_path) -> None:
+    import pytest
+
+    from daytona_gym.telemetry.dashboard import _resolve_run
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    (runs / "ok.jsonl").write_text("{}\n")
+    (tmp_path / "secret.jsonl").write_text("{}\n")
+    (runs / "ok.progress.json").write_text("{}")
+    assert _resolve_run(runs, "ok") == (runs / "ok.jsonl").resolve()
+    assert _resolve_run(runs, "ok.jsonl") == (runs / "ok.jsonl").resolve()
+    for bad in ("../secret", "../secret.jsonl", "ok.progress.json", ".."):
+        with pytest.raises(FileNotFoundError):
+            _resolve_run(runs, bad)

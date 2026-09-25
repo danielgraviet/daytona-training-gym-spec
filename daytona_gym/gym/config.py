@@ -212,15 +212,13 @@ class TrainConfig:
             except Exception:  # noqa: BLE001 — progress must never break training
                 pass
 
+        from daytona_gym.ingest.shipper import start_shipper_from_env
+
         run: TrainingRun | None = None
         dash_run: TrainingRun | None = None
+        shipper = None
         try:
-            if self.model is not None:
-                from daytona_gym.gym.model_prep import ensure_model_ready
-
-                ensure_model_ready(self.model)
-
-            self.validate(require_existing_paths=True)
+            # Plan first (paths only) so progress + shipping cover model prep too.
             plan = build_plan(self)
             progress["runs_dir"] = plan.telemetry_path.parent
             progress["stem"] = plan.telemetry_path.stem
@@ -230,6 +228,14 @@ class TrainConfig:
                 status="running",
                 started_at=started_at,
             )
+            shipper = start_shipper_from_env(plan.telemetry_path, plan.run_id)
+
+            if self.model is not None:
+                from daytona_gym.gym.model_prep import ensure_model_ready
+
+                ensure_model_ready(self.model)
+
+            self.validate(require_existing_paths=True)
 
             # Open the dashboard BEFORE training so the run can be watched live.
             should_open = True if open is None else open
@@ -265,6 +271,8 @@ class TrainConfig:
             )
             if dash_run is not None:
                 dash_run.close_dashboard()
+            if shipper is not None:
+                shipper.stop()
             raise
 
         if dash_run is not None:
@@ -281,5 +289,7 @@ class TrainConfig:
             done=True,
             elapsed_s=time.time() - started_at,
         )
+        if shipper is not None:
+            shipper.stop()  # drains the final status to the ingest host
         run.result()  # prints Modal-shaped completion banner (already done)
         return run

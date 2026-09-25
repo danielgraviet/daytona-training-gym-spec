@@ -35,7 +35,7 @@
       throw e;
     }
     // Finished runs change rarely; don't hammer the server (or the tunnel).
-    const terminal = live?.done || ['completed', 'failed', 'stale'].includes(live?.status);
+    const terminal = live?.done || ['completed', 'failed', 'stale', 'worker_lost'].includes(live?.status);
     return terminal ? 15000 : 2000;
   }
 
@@ -60,7 +60,7 @@
 
   function statusClass(s) {
     if (s === 'completed' || s === 'ok') return 'ok';
-    if (s === 'failed' || s === 'aborted') return 'bad';
+    if (s === 'failed' || s === 'aborted' || s === 'worker_lost') return 'bad';
     return 'warn';
   }
 
