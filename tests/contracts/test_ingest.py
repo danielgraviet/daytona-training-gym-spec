@@ -338,3 +338,27 @@ def test_push_backfills_finished_run_idempotently(ingest, tmp_path, capsys) -> N
     assert push_files([path], config=cfg) == 0  # second push: nothing new, no dupes
     assert (data / "run_backfill.jsonl").read_bytes() == path.read_bytes()
     assert "pushed run_backfill" in capsys.readouterr().out
+
+
+def test_unreachable_ingest_warns_but_does_not_block_launch(tmp_path, monkeypatch, capsys) -> None:
+    from daytona_gym.ingest.shipper import start_shipper_from_env
+
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_URL", "http://127.0.0.1:9")  # nothing listens
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_TOKEN", TOKEN)
+    path, _ = _worker_files(tmp_path)
+    shipper = start_shipper_from_env(path, "run_ship")
+    assert shipper is not None  # still ships later
+    shipper._stop.set()  # noqa: SLF001
+    out = capsys.readouterr().out
+    assert "is not reachable" in out and "dg ingest deploy --daytona" in out
+
+
+def test_reachable_ingest_does_not_warn(ingest, tmp_path, monkeypatch, capsys) -> None:
+    from daytona_gym.ingest.shipper import start_shipper_from_env
+
+    url, _ = ingest
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_URL", url)
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_TOKEN", TOKEN)
+    path, _ = _worker_files(tmp_path)
+    start_shipper_from_env(path, "run_ship").stop(drain_timeout=1)
+    assert "WARNING" not in capsys.readouterr().out

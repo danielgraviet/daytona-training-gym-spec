@@ -404,8 +404,11 @@ def require_daytona_api_key() -> None:
     except OSError:
         key = None
     if not key:
+        # "KEY=" with no value (e.g. an unfilled --env-file template) is a
+        # different mistake from a missing variable — say which one it is.
+        state = "is empty" if "DAYTONA_API_KEY" in os.environ else "is not set"
         raise DaytonaError(
             ErrorCode.USER_CODE_ERROR,
-            "DAYTONA_API_KEY is not set on this machine. `export DAYTONA_API_KEY=...` "
-            "or add it to the repo .env (main.py / dg load it), then relaunch.",
+            f"DAYTONA_API_KEY {state} on this machine. `export DAYTONA_API_KEY=...`, "
+            "add it to the repo .env, or fill it in the --env-file, then relaunch.",
         )

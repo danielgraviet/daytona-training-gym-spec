@@ -289,7 +289,32 @@ def start_shipper_from_env(telemetry_path: str | Path, run_id: str) -> Telemetry
         print(f"ingest disabled: {exc}", flush=True)
         return None
     print(f"ingest: shipping telemetry → {config.run_url(run_id)}", flush=True)
+    _warn_if_unreachable(config)
     return shipper.start()
+
+
+def _warn_if_unreachable(config: IngestConfig, *, timeout: float = 10.0) -> bool:
+    """Loud, non-fatal check at launch: the run continues and ships later.
+
+    Seen live: the Daytona ingest sandbox had been stopped (auto-stop was off),
+    and the only symptom was a stale dashboard.
+    """
+    try:
+        with urllib.request.urlopen(f"{config.url}/healthz", timeout=timeout) as resp:  # noqa: S310
+            if resp.status == 200:
+                return True
+            status = str(resp.status)
+    except urllib.error.HTTPError as exc:
+        status = f"HTTP {exc.code}"
+    except (urllib.error.URLError, OSError) as exc:
+        status = type(exc).__name__
+    print(
+        f"ingest: WARNING — {config.url} is not reachable ({status}). Training continues; "
+        "telemetry stays on disk and ships automatically once it is back. If it runs in a "
+        "Daytona sandbox, restart it with `dg ingest deploy --daytona`.",
+        flush=True,
+    )
+    return False
 
 
 def push_files(paths: list[Path], *, config: IngestConfig, timeout: float = 600.0) -> int:

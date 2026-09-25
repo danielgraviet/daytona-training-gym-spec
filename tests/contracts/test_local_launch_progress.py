@@ -106,3 +106,12 @@ def test_missing_api_key_fails_before_model_prep(cfg, monkeypatch) -> None:
     assert "DAYTONA_API_KEY" in caught.value.message
     prog = read_progress(Path(c.telemetry_path).parent, "run_local")
     assert prog["status"] == "failed" and "DAYTONA_API_KEY" in prog["message"]
+
+
+def test_empty_api_key_is_reported_as_empty(monkeypatch) -> None:
+    from daytona_gym.gym.launch import require_daytona_api_key
+
+    monkeypatch.setenv("DAYTONA_API_KEY", "")  # e.g. unfilled --env-file line "DAYTONA_API_KEY="
+    monkeypatch.delenv("DAYTONA_API_KEY_FILE", raising=False)
+    with pytest.raises(DaytonaError, match="is empty"):
+        require_daytona_api_key()
