@@ -1,26 +1,29 @@
 <script>
   import { onMount } from 'svelte';
-  import { fetchRuns, navigate } from '../lib/api.js';
+  import { fetchRuns, navigate, OFFLINE_MESSAGE, poll } from '../lib/api.js';
 
   let runs = $state([]);
   let error = $state(null);
+  let offline = $state(false);
   let clock = $state(Date.now());
 
   async function refresh() {
     try {
       runs = await fetchRuns();
       error = null;
+      offline = false;
     } catch (e) {
-      error = String(e.message || e);
+      offline = Boolean(e?.offline);
+      error = offline ? null : String(e.message || e);
+      throw e;
     }
   }
 
   onMount(() => {
-    refresh();
-    const poll = setInterval(refresh, 2500);
+    const stop = poll(refresh, { interval: 2500 });
     const tick = setInterval(() => (clock = Date.now()), 1000);
     return () => {
-      clearInterval(poll);
+      stop();
       clearInterval(tick);
     };
   });
@@ -50,6 +53,9 @@
     <p class="muted m-0 text-xs">live · poll 2.5s</p>
   </header>
 
+  {#if offline}
+    <p class="panel warn mb-3 px-3 py-2 text-sm">{OFFLINE_MESSAGE}</p>
+  {/if}
   {#if error}
     <p class="bad">{error}</p>
   {/if}

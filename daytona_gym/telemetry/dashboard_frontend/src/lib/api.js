@@ -1,10 +1,56 @@
+export const OFFLINE_MESSAGE =
+  'Dashboard server is offline (the tunnel or `dg dash` was stopped). ' +
+  'Showing the last data received; this page reconnects automatically.';
+
+export class OfflineError extends Error {
+  constructor() {
+    super(OFFLINE_MESSAGE);
+    this.offline = true;
+  }
+}
+
+// 502-504 / Cloudflare 52x-530 mean "origin unreachable", not an API error.
+const OFFLINE_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530]);
+
 async function getJson(path) {
-  const res = await fetch(path, { cache: 'no-store' });
+  let res;
+  try {
+    res = await fetch(path, { cache: 'no-store' });
+  } catch {
+    throw new OfflineError();
+  }
+  const type = res.headers.get('content-type') || '';
+  if (OFFLINE_STATUSES.has(res.status) || (!type.includes('json') && type.includes('html'))) {
+    throw new OfflineError();
+  }
   if (!res.ok) {
-    const text = await res.text();
+    const text = (await res.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     throw new Error(`${res.status}: ${text.slice(0, 200)}`);
   }
   return res.json();
+}
+
+/** setTimeout loop: ``fn`` returns the next delay in ms. Backs off while offline. */
+export function poll(fn, { interval, maxInterval = 30000 }) {
+  let stopped = false;
+  let timer = null;
+  let delay = interval;
+  async function tick() {
+    let next = interval;
+    try {
+      next = (await fn()) ?? interval;
+      delay = interval;
+    } catch (e) {
+      delay = e?.offline ? Math.min(maxInterval, delay * 2) : interval;
+      next = delay;
+    }
+    if (!stopped) timer = setTimeout(tick, next);
+  }
+  tick();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
 }
 
 export function fetchOverview() {

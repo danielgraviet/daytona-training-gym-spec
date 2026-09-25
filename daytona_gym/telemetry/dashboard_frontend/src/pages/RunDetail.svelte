@@ -3,7 +3,7 @@
   import LineChart from '../components/charts/LineChart.svelte';
   import BarChart from '../components/charts/BarChart.svelte';
   import WhereTimeWent from '../components/WhereTimeWent.svelte';
-  import { fetchAnalysis, fetchCharts, fetchLive, fetchRun, navigate } from '../lib/api.js';
+  import { fetchAnalysis, fetchCharts, fetchLive, fetchRun, navigate, OFFLINE_MESSAGE, poll } from '../lib/api.js';
 
   let { stem } = $props();
 
@@ -12,6 +12,7 @@
   let charts = $state(null);
   let analysis = $state(null);
   let error = $state(null);
+  let offline = $state(false);
   let clock = $state(Date.now());
 
   async function refresh() {
@@ -27,17 +28,22 @@
         analysis = null;
       }
       error = null;
+      offline = false;
     } catch (e) {
-      error = String(e.message || e);
+      offline = Boolean(e?.offline);
+      error = offline ? null : String(e.message || e);
+      throw e;
     }
+    // Finished runs change rarely; don't hammer the server (or the tunnel).
+    const terminal = live?.done || ['completed', 'failed', 'stale'].includes(live?.status);
+    return terminal ? 15000 : 2000;
   }
 
   onMount(() => {
-    refresh();
-    const poll = setInterval(refresh, 2000);
+    const stop = poll(refresh, { interval: 2000 });
     const tick = setInterval(() => (clock = Date.now()), 1000);
     return () => {
-      clearInterval(poll);
+      stop();
       clearInterval(tick);
     };
   });
@@ -104,11 +110,14 @@
     </div>
   </header>
 
+  {#if offline}
+    <p class="panel warn mb-3 px-3 py-2 text-sm">{OFFLINE_MESSAGE}</p>
+  {/if}
   {#if error}
     <p class="bad">{error}</p>
   {/if}
 
-  {#if !live?.ready && !detail}
+  {#if !live?.ready && !detail && !offline}
     <div class="panel mb-4 p-4">
       <h2 class="mt-0 text-base">Starting</h2>
       <ol class="muted m-0 list-decimal pl-5 text-sm">

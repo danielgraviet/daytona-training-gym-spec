@@ -11,7 +11,7 @@
     try {
       detail = await fetchRollout(stem, rolloutId);
     } catch (e) {
-      error = String(e.message || e);
+      error = String(e.message || e);  // OfflineError already has a readable message
     }
   });
 </script>
