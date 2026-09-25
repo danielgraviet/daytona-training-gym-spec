@@ -67,5 +67,32 @@ def Qwen25_05B(**overrides: object) -> SoftSlimeModel:
     return replace(base, **overrides) if overrides else base  # type: ignore[arg-type]
 
 
+def Qwen25_7B(**overrides: object) -> SoftSlimeModel:
+    """Qwen2.5-7B-Instruct — larger coding tool-loop (needs more VRAM)."""
+    base = SoftSlimeModel(
+        name="Qwen2.5-7B-Instruct",
+        hf_repo="Qwen/Qwen2.5-7B-Instruct",
+        model_script="qwen2.5-7B.sh",
+        hf_checkpoint="/root/Qwen2.5-7B-Instruct/",
+        ref_load="/root/Qwen2.5-7B-Instruct_torch_dist/",
+        sglang_mem_fraction=0.35,
+    )
+    return replace(base, **overrides) if overrides else base  # type: ignore[arg-type]
+
+
+def Qwen25_14B(**overrides: object) -> SoftSlimeModel:
+    """Qwen2.5-14B-Instruct — multi-GPU coding preset (set ``num_gpus``)."""
+    base = SoftSlimeModel(
+        name="Qwen2.5-14B-Instruct",
+        hf_repo="Qwen/Qwen2.5-14B-Instruct",
+        model_script="qwen2.5-14B.sh",
+        hf_checkpoint="/root/Qwen2.5-14B-Instruct/",
+        ref_load="/root/Qwen2.5-14B-Instruct_torch_dist/",
+        sglang_mem_fraction=0.3,
+        num_gpus=2,
+    )
+    return replace(base, **overrides) if overrides else base  # type: ignore[arg-type]
+
+
 # Back-compat alias.
 SlimeModelPreset = SoftSlimeModel

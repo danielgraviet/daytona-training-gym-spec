@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -30,6 +31,8 @@ _TELEMETRY_RE = re.compile(r"^__DG_TELEMETRY__=(.+)$")
 _DASH_RE = re.compile(r"^__DG_DASHBOARD__=(.+)$")
 _RC_RE = re.compile(r"^__DG_RETURNCODE__=(\d+)$")
 _DETACHED_RE = re.compile(r"^__DG_DETACHED__=1$")
+_WORKER_LOG_RE = re.compile(r"^__DG_WORKER_LOG__=(.+)$")
+_WORKER_PID_RE = re.compile(r"^detached_pid=(\d+)")
 
 _FORWARD_ENV_KEYS = (
     "DAYTONA_API_KEY",
@@ -50,14 +53,251 @@ def _forward_env_from_local() -> dict[str, str]:
 
 
 def _export_forward_env_cmd(extra: dict[str, str] | None = None) -> str:
+    """Source secrets from a remote env file (keys written separately via PtyShell)."""
     merged = _forward_env_from_local()
     if extra:
         merged.update({k: v for k, v in extra.items() if v})
     if not merged:
         return "true"
-    return " && ".join(
-        f"export {key}={shlex.quote(val)}" for key, val in merged.items()
+    # Never echo secret values into the typed shell command line.
+    return (
+        "set -a && "
+        "[ -f /tmp/daytona_gym_forward.env ] && . /tmp/daytona_gym_forward.env; "
+        "set +a"
     )
+
+
+def _install_forward_env_via_shell(shell: Any, extra: dict[str, str] | None = None) -> None:
+    """Write ``/tmp/daytona_gym_forward.env`` on the remote without logging secrets."""
+    merged = _forward_env_from_local()
+    if extra:
+        merged.update({k: v for k, v in extra.items() if v})
+    if not merged:
+        shell.run("rm -f /tmp/daytona_gym_forward.env")
+        return
+    body = "".join(f"{k}={shlex.quote(v)}\n" for k, v in merged.items())
+    b64 = base64.b64encode(body.encode("utf-8")).decode("ascii")
+    shell.run("rm -f /tmp/daytona_gym_forward.env.b64 /tmp/daytona_gym_forward.env")
+    for i in range(0, len(b64), 3000):
+        chunk = b64[i : i + 3000]
+        shell.run(f"printf '%s' '{chunk}' >> /tmp/daytona_gym_forward.env.b64")
+    shell.run(
+        "base64 -d /tmp/daytona_gym_forward.env.b64 > /tmp/daytona_gym_forward.env "
+        "&& rm -f /tmp/daytona_gym_forward.env.b64 && chmod 600 /tmp/daytona_gym_forward.env"
+    )
+
+
+def _local_package_root() -> Path:
+    """Repo root that contains ``daytona_gym/`` on the laptop."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _tar_filter(tarinfo: Any) -> Any | None:
+    """Skip bulky / local-only paths when syncing the package to the worker."""
+    name = tarinfo.name.replace("\\", "/")
+    skip_bits = (
+        "/__pycache__",
+        "/.pytest_cache",
+        "/node_modules",
+        "/dashboard_frontend/node_modules",
+        "/.git",
+        ".pyc",
+    )
+    if any(bit in name for bit in skip_bits):
+        return None
+    # Prefer prebuilt SPA static assets; skip the frontend sources.
+    if "/dashboard_frontend/" in name and "/dashboard_static/" not in name:
+        # Keep package.json-less tree out — static build is enough on worker.
+        if name.rstrip("/").endswith("dashboard_frontend"):
+            return None
+        return None
+    return tarinfo
+
+
+def _sync_package_via_shell(shell: Any, remote_repo: str) -> None:
+    """Overwrite remote ``daytona_gym/`` with the laptop's tree (unpushed edits).
+
+    ``git pull`` only sees GitHub; dogfood DX often lives in a dirty local tree.
+    """
+    import tarfile
+
+    root = _local_package_root()
+    pkg = root / "daytona_gym"
+    if not pkg.is_dir():
+        print(f"package sync skipped: missing {pkg}", file=sys.stderr)
+        return
+
+    print("syncing local daytona_gym/ → worker (overwrites git clone) …", flush=True)
+    with tempfile.NamedTemporaryFile(suffix=".tgz") as tmp:
+        with tarfile.open(tmp.name, mode="w:gz") as archive:
+            archive.add(pkg, arcname="daytona_gym", filter=_tar_filter)
+        raw = Path(tmp.name).read_bytes()
+    b64 = base64.b64encode(raw).decode("ascii")
+    print(f"  package archive {len(raw) // 1024} KiB", flush=True)
+    remote_tgz = "/tmp/daytona_gym_pkg.tgz"
+    with _quiet_shell_output(shell):
+        shell.run(f"rm -f {remote_tgz}.b64 {remote_tgz}")
+        for i in range(0, len(b64), 3000):
+            chunk = b64[i : i + 3000]
+            shell.run(f"printf '%s' '{chunk}' >> {remote_tgz}.b64")
+        shell.run(
+            f"base64 -d {remote_tgz}.b64 > {remote_tgz} && rm -f {remote_tgz}.b64"
+        )
+        # Ensure repo exists, then replace package tree.
+        shell.run(
+            f"mkdir -p {shlex.quote(remote_repo)} && "
+            f"rm -rf {shlex.quote(remote_repo + '/daytona_gym')} && "
+            f"tar xzf {remote_tgz} -C {shlex.quote(remote_repo)} && "
+            f"rm -f {remote_tgz}"
+        )
+    print("package sync done", flush=True)
+
+
+def _sync_package_via_scp(worker: Any) -> None:
+    """Same as PtyShell sync, using scp (exec transport)."""
+    import tarfile
+
+    root = _local_package_root()
+    pkg = root / "daytona_gym"
+    if not pkg.is_dir():
+        return
+    print("syncing local daytona_gym/ → worker via scp …", flush=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tgz = Path(tmp) / "daytona_gym.tgz"
+        with tarfile.open(tgz, mode="w:gz") as archive:
+            archive.add(pkg, arcname="daytona_gym", filter=_tar_filter)
+        remote_tgz = "/tmp/daytona_gym_pkg.tgz"
+        scp = worker._scp_base() + [str(tgz), f"{worker.host}:{remote_tgz}"]
+        proc = subprocess.run(scp, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise DaytonaError(
+                ErrorCode.PLATFORM_ERROR,
+                "package scp failed: " + (proc.stderr or proc.stdout or "").strip(),
+            )
+        cmd = (
+            f"mkdir -p {shlex.quote(worker.remote_repo)} && "
+            f"rm -rf {shlex.quote(worker.remote_repo + '/daytona_gym')} && "
+            f"tar xzf {remote_tgz} -C {shlex.quote(worker.remote_repo)} && "
+            f"rm -f {remote_tgz}"
+        )
+        ssh = worker._ssh_base() + [cmd]
+        proc2 = subprocess.run(ssh, capture_output=True, text=True)
+        if proc2.returncode != 0:
+            raise DaytonaError(
+                ErrorCode.PLATFORM_ERROR,
+                "package extract failed: "
+                + (proc2.stderr or proc2.stdout or "").strip(),
+            )
+    print("package sync done", flush=True)
+
+
+def _start_laptop_dash_for_run(
+    *,
+    run_id: str,
+    host: str,
+    remote_repo: str,
+    identity: str | Path | None,
+    port: int | None = None,
+    dash_port: int = 3000,
+    worker_log: str | None = None,
+) -> tuple[str, Any]:
+    """Start localhost dash + PtyShell sync; return deep URL and handle."""
+    from daytona_gym.gym.console_ui import banner_open
+    from daytona_gym.telemetry.dashboard import start_dashboard
+    from daytona_gym.telemetry.dashboard_sync import (
+        sync_run_live_via_pty,
+        sync_runs_from_ssh,
+    )
+    from daytona_gym.telemetry.progress import read_progress, write_progress
+
+    local_runs = Path("runs").resolve()
+    local_runs.mkdir(parents=True, exist_ok=True)
+    ident = Path(identity).expanduser() if identity else None
+
+    if read_progress(local_runs, run_id) is None:
+        write_progress(
+            local_runs,
+            run_id,
+            phase="waiting",
+            message="Waiting for worker phases (dataset → model → Ray/Slime)",
+            status="running",
+            detail=(
+                "Laptop is polling the GPU. Real phases appear once the worker "
+                "writes runs/<id>.progress.json (boot → dataset → model_* → ray_start)."
+            ),
+        )
+
+    def _sync() -> None:
+        try:
+            # Fast path: one run's progress + worker log (what the wait UI needs).
+            sync_run_live_via_pty(
+                host=host,
+                remote_root=remote_repo,
+                run_id=run_id,
+                local_runs=local_runs,
+                identity=ident,
+                ssh_port=port,
+                worker_log=worker_log,
+            )
+            return
+        except Exception as live_exc:  # noqa: BLE001
+            live_err = live_exc
+        try:
+            sync_runs_from_ssh(
+                target=host,
+                local_runs=local_runs,
+                remote_root=remote_repo,
+                identity=ident,
+                ssh_port=port,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Never leave the UI on a frozen stub with no explanation.
+            prev = read_progress(local_runs, run_id) or {}
+            if str(prev.get("phase") or "") in {"", "waiting", "syncing"}:
+                write_progress(
+                    local_runs,
+                    run_id,
+                    phase="syncing",
+                    message=f"GPU sync failed: {exc}",
+                    status="running",
+                    detail=f"live={live_err!s}; full={exc!s}",
+                )
+            print(f"dash sync: {exc}", file=sys.stderr)
+
+    _sync()
+    handle = start_dashboard(
+        runs_dir=local_runs,
+        port=dash_port,
+        open_browser=False,
+        share=False,
+        quiet=True,
+    )
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.wait(3.0):
+            _sync()
+
+    thread = threading.Thread(target=_loop, name="laptop-dash-sync", daemon=True)
+    thread.start()
+    handle._sync_stop = stop  # type: ignore[attr-defined]
+    deep = f"{handle.local_url.rstrip('/')}/run/{run_id}"
+    banner_open(deep)
+    return deep, handle
+
+
+def _quiet_shell_output(shell: Any) -> Any:
+    """Context: mute PtyShell echo during noisy package sync."""
+
+    class _Mute:
+        def __enter__(self) -> None:
+            self._prev = getattr(shell, "_on_output", None)
+            shell._on_output = None
+
+        def __exit__(self, *exc: object) -> None:
+            shell._on_output = self._prev
+
+    return _Mute()
 
 
 class Worker(Protocol):
@@ -162,12 +402,16 @@ class SshWorker:
             # Plan is local/CPU-safe; remote not required.
             return config.build()
 
+        # Detached remote runs: dash lives on the laptop (localhost). Do not open
+        # a worker-side tunnel by default — markers return as soon as run_id exists.
+        if open is None:
+            open = not detach
         payload = config_to_remote_payload(
             config,
             remote_repo=self.remote_repo,
             skip_preflight=skip_preflight,
             preflight_timeout_seconds=preflight_timeout_seconds,
-            open=True if open is None else open,
+            open=open,
             open_browser=open_browser,
             detach=detach,
         )
@@ -283,13 +527,50 @@ class SshWorker:
                     )
                 raise DaytonaError(ErrorCode.PLATFORM_ERROR, hint)
 
+            # Write secrets to a remote env file (never on the ssh command line).
+            merged = _forward_env_from_local()
+            extra = payload.get("forward_env") or {}
+            if isinstance(extra, dict):
+                merged.update({k: v for k, v in extra.items() if v})
+            if merged:
+                local_env = Path(tmp) / "forward.env"
+                local_env.write_text(
+                    "".join(f"{k}={shlex.quote(v)}\n" for k, v in merged.items()),
+                    encoding="utf-8",
+                )
+                scp_env = self._scp_base() + [
+                    str(local_env),
+                    f"{self.host}:/tmp/daytona_gym_forward.env",
+                ]
+                env_proc = subprocess.run(scp_env, capture_output=True, text=True)
+                if env_proc.returncode != 0:
+                    raise DaytonaError(
+                        ErrorCode.PLATFORM_ERROR,
+                        "failed to scp forward env file: "
+                        + (env_proc.stderr or env_proc.stdout or "").strip(),
+                    )
+
+            # Ensure repo exists, then overlay laptop package.
+            ensure = self._ssh_base() + [
+                self._ensure_remote_repo_cmd()
+                + (
+                    f" && cd {shlex.quote(self.remote_repo)}"
+                    " && (git pull --ff-only || true)"
+                    if self.pull
+                    else ""
+                )
+            ]
+            subprocess.run(ensure, capture_output=True, text=True)
+            _sync_package_via_scp(self)
+
             remote_bits = [
-                self._ensure_remote_repo_cmd(),
                 f"cd {shlex.quote(self.remote_repo)}",
             ]
-            if self.pull:
-                remote_bits.append("git pull --ff-only || true")
             remote_bits.append(_export_forward_env_cmd(payload.get("forward_env")))
+            remote_bits.append(
+                f"export PYTHONPATH={shlex.quote(self.remote_repo)}"
+                "${PYTHONPATH:+:$PYTHONPATH}"
+            )
             remote_bits.append(
                 "python -m daytona_gym.gym.remote_job " + shlex.quote(remote_job)
             )
@@ -333,15 +614,33 @@ class SshWorker:
                 telemetry = f"{self.remote_repo}/runs/{run_id}.jsonl"
 
             final_rc = None if detached else (returncode if rc == 0 else rc)
+            laptop_dash = None
+            if detached and run_id and run_id != "remote_unknown":
+                try:
+                    dashboard, laptop_dash = _start_laptop_dash_for_run(
+                        run_id=run_id,
+                        host=self.host,
+                        remote_repo=self.remote_repo,
+                        identity=self.identity,
+                        port=self.port,
+                        dash_port=int(os.environ.get("DAYTONA_GYM_DASH_PORT", "3000")),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"laptop dash failed: {exc}", file=sys.stderr)
             run = TrainingRun(
                 run_id=run_id,
-                telemetry_path=telemetry,
+                telemetry_path=str(Path("runs") / f"{run_id}.jsonl"),
                 command=ssh_cmd,
                 env={"DAYTONA_GYM_WORKER": self.host},
-                runtime_env={"worker": "ssh", "host": self.host, "detached": detached},
+                runtime_env={
+                    "worker": "ssh",
+                    "host": self.host,
+                    "detached": detached,
+                    "remote_telemetry": telemetry,
+                },
                 dry_run=False,
                 returncode=final_rc,
-                inspect_hint=f"dg stats {telemetry}"
+                inspect_hint=f"dg stats runs/{run_id}.jsonl"
                 + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
                 dashboard_url=dashboard,
                 detached=detached,
@@ -351,18 +650,12 @@ class SshWorker:
                     else ("failed" if int(final_rc or 0) != 0 else "completed")
                 ),
             )
-            if dashboard:
-                print(flush=True)
-                print("=" * 60, flush=True)
-                print(
-                    "  → OPEN  (detached — training continues on worker)"
-                    if detached
-                    else "  → OPEN  (from worker tunnel)",
-                    flush=True,
-                )
-                print(f"  {dashboard}", flush=True)
-                print("=" * 60, flush=True)
-                print(flush=True)
+            if laptop_dash is not None:
+                run._dashboard = laptop_dash
+            elif dashboard:
+                from daytona_gym.gym.console_ui import banner_open
+
+                banner_open(dashboard)
             return run
 
     def _shell_remote_job(self, payload: dict[str, Any]) -> TrainingRun:
@@ -401,24 +694,42 @@ class SshWorker:
 
         try:
             with PtyShell(ssh_cmd, on_output=capture, connect_timeout=60) as shell:
-                shell.run(
-                    f"rm -f {shlex.quote(remote_job)}.b64 {shlex.quote(remote_job)}"
-                )
-                for i in range(0, len(b64), 3000):
-                    chunk = b64[i : i + 3000]
+                print("uploading job payload…", flush=True)
+                with _quiet_shell_output(shell):
                     shell.run(
-                        f"printf '%s' '{chunk}' >> {shlex.quote(remote_job)}.b64"
+                        f"rm -f {shlex.quote(remote_job)}.b64 {shlex.quote(remote_job)}"
                     )
-                shell.run(
-                    f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
-                )
+                    for i in range(0, len(b64), 3000):
+                        chunk = b64[i : i + 3000]
+                        shell.run(
+                            f"printf '%s' '{chunk}' >> {shlex.quote(remote_job)}.b64"
+                        )
+                    shell.run(
+                        f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
+                    )
+                    _install_forward_env_via_shell(shell, payload.get("forward_env"))
 
-                launch = (
+                # Clone/pull first, then overlay laptop package (unpushed DX fixes).
+                print("ensuring remote repo…", flush=True)
+                shell.run(
                     self._ensure_remote_repo_cmd()
-                    + f" && cd {shlex.quote(self.remote_repo)}"
-                    + (" && (git pull --ff-only || true)" if self.pull else "")
+                    + (
+                        f" && cd {shlex.quote(self.remote_repo)}"
+                        " && (git pull --ff-only || true)"
+                        if self.pull
+                        else ""
+                    )
+                )
+                _sync_package_via_shell(shell, self.remote_repo)
+
+                print("starting remote training job…", flush=True)
+                # Prefer the synced repo tree over a stale site-packages install.
+                launch = (
+                    f"cd {shlex.quote(self.remote_repo)}"
                     + " && "
                     + _export_forward_env_cmd(payload.get("forward_env"))
+                    + f" && export PYTHONPATH={shlex.quote(self.remote_repo)}"
+                    + '${PYTHONPATH:+:$PYTHONPATH}'
                     + " && python -m daytona_gym.gym.remote_job "
                     + shlex.quote(remote_job)
                     + "; echo __DG_SHELL_DONE__"
@@ -435,6 +746,7 @@ class SshWorker:
         run_id = ""
         telemetry = ""
         dashboard: str | None = None
+        worker_log: str | None = None
         returncode = 130 if interrupted else 1
         detached = False
         for line in text.replace("\r", "\n").splitlines():
@@ -445,6 +757,8 @@ class SshWorker:
                 telemetry = m.group(1).strip()
             elif m := _DASH_RE.match(stripped):
                 dashboard = m.group(1).strip()
+            elif m := _WORKER_LOG_RE.match(stripped):
+                worker_log = m.group(1).strip()
             elif _DETACHED_RE.match(stripped):
                 detached = True
             elif m := _RC_RE.match(stripped):
@@ -458,19 +772,37 @@ class SshWorker:
         if detached and not interrupted:
             returncode = None
 
+        laptop_dash = None
+        # Prefer localhost dash on the laptop; ignore Cloudflare from the worker.
+        if detached and not interrupted and run_id and run_id != "remote_unknown":
+            try:
+                dashboard, laptop_dash = _start_laptop_dash_for_run(
+                    run_id=run_id,
+                    host=self.host,
+                    remote_repo=self.remote_repo,
+                    identity=self.identity,
+                    port=self.port,
+                    dash_port=int(os.environ.get("DAYTONA_GYM_DASH_PORT", "3000")),
+                    worker_log=worker_log,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"laptop dash failed: {exc}", file=sys.stderr)
+
         run = TrainingRun(
             run_id=run_id,
-            telemetry_path=telemetry,
+            telemetry_path=str(Path("runs") / f"{run_id}.jsonl"),
             command=ssh_cmd,
             env={"DAYTONA_GYM_WORKER": self.host},
             runtime_env={
                 "worker": "ssh-shell",
                 "host": self.host,
                 "detached": detached,
+                "remote_telemetry": telemetry,
+                "worker_log": worker_log,
             },
             dry_run=False,
             returncode=returncode,
-            inspect_hint=f"dg stats {telemetry}"
+            inspect_hint=f"dg stats runs/{run_id}.jsonl"
             + (f"  |  {dashboard}" if dashboard else "  |  dg dash"),
             dashboard_url=dashboard,
             detached=detached,
@@ -480,18 +812,8 @@ class SshWorker:
                 else ("failed" if int(returncode or 0) != 0 else "completed")
             ),
         )
-        if dashboard and not interrupted:
-            print(flush=True)
-            print("=" * 60, flush=True)
-            print(
-                "  → OPEN  (detached — training continues on worker)"
-                if detached
-                else "  → OPEN  (from worker tunnel)",
-                flush=True,
-            )
-            print(f"  {dashboard}", flush=True)
-            print("=" * 60, flush=True)
-            print(flush=True)
+        if laptop_dash is not None:
+            run._dashboard = laptop_dash
         return run
 
 
@@ -506,8 +828,22 @@ def config_to_remote_payload(
     detach: bool = False,
 ) -> dict[str, Any]:
     """JSON payload consumed by ``python -m daytona_gym.gym.remote_job`` on the worker."""
+    from daytona_gym.gym.dataset import (
+        PromptJsonlDataset,
+        serialize_dataset,
+    )
+
     compute = config.resolved_compute()
-    dataset_path = _remote_dataset_path(config, remote_repo=remote_repo)
+    if isinstance(config.dataset, PromptJsonlDataset):
+        dataset_blob = {
+            "kind": "prompt_jsonl",
+            "path": _remote_dataset_path(config, remote_repo=remote_repo),
+            "input_key": config.dataset.input_key,
+            "label_key": config.dataset.label_key,
+        }
+    else:
+        # HF / Harbor: send compact config; worker materializes JSONL.
+        dataset_blob = serialize_dataset(config.dataset)
     model_blob: dict[str, Any] | None = None
     if config.model is not None:
         model_blob = asdict(config.model)
@@ -527,11 +863,7 @@ def config_to_remote_payload(
     return {
         "run_name": config.run_name,
         "repo": remote_repo,
-        "dataset": {
-            "path": dataset_path,
-            "input_key": config.dataset.input_key,
-            "label_key": config.dataset.label_key,
-        },
+        "dataset": dataset_blob,
         "recipe": asdict(config.recipe),
         "model": model_blob,
         "compute": compute_blob,
@@ -547,6 +879,9 @@ def config_to_remote_payload(
 
 def _remote_dataset_path(config: TrainConfig, *, remote_repo: str) -> str:
     """Prefer repo-relative dataset path so Mac absolute paths don't leak."""
+    from daytona_gym.gym.dataset import PromptJsonlDataset
+
+    assert isinstance(config.dataset, PromptJsonlDataset)
     local = config.dataset.resolved_path()
     repo = Path(config.repo).expanduser().resolve() if config.repo else None
     if repo is not None:
@@ -555,6 +890,5 @@ def _remote_dataset_path(config: TrainConfig, *, remote_repo: str) -> str:
             return str(Path(remote_repo) / rel)
         except ValueError:
             pass
-    # Fall back to basename under remote examples path if it looks like coding dogfood
     name = local.name
     return f"{remote_repo.rstrip('/')}/examples/coding_dogfood/prompts/{name}"

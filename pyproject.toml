@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Daytona" }]
 dependencies = [
     "daytona>=0.198.0",
+    "rich>=13.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,14 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["daytona_gym"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"daytona_gym/telemetry/dashboard_static" = "daytona_gym/telemetry/dashboard_static"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "daytona_gym",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

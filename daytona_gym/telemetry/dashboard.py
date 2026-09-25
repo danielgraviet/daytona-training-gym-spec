@@ -1,10 +1,11 @@
-"""Minimal local dashboard over ``runs/*.jsonl``.
+"""Local dashboard over ``runs/*.jsonl`` (Svelte SPA + JSON/SSE APIs).
 
-  dg dash                 # local browser; on GPU: live public URL via tunnel
+  dg dash                 # localhost:3000; auto-sync RunPod from .env
   dg open
-  dg dash --share         # force Cloudflare quick tunnel
-  dg dash --no-share      # loopback only
-  python -m daytona_gym.telemetry.dashboard --runs-dir runs --port 8765
+  dg dash --port 3000
+  dg dash --share         # optional Cloudflare quick tunnel
+  dg dash --remote USER@HOST   # escape hatch (non-RunPod SSH)
+  python -m daytona_gym.telemetry.dashboard --runs-dir runs --port 3000
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from urllib.parse import unquote, urlparse
 from daytona_gym.telemetry import dashboard_data as data
 from daytona_gym.telemetry import progress as run_progress
 from daytona_gym.telemetry.dashboard_sync import (
+    resolve_auto_remote,
     resolve_remote_target,
     sync_runs_from_ssh,
 )
@@ -77,7 +79,8 @@ def start_dashboard(
     runs_dir.mkdir(parents=True, exist_ok=True)
     context = detect_serve_context()
     if share is None:
-        share = context.kind in {"runpod", "ssh"}
+        # Prefer loopback. Cloudflare is opt-in via --share / share=True.
+        share = False
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -268,13 +271,54 @@ def _read_runpod_id(path: str | Path) -> str | None:
 
 
 def _print_access_hints(context: ServeContext, *, host: str, port: int) -> None:
+    print()
+    print(f"Open locally:  http://127.0.0.1:{port}/")
     if context.kind in {"runpod", "ssh"}:
-        print()
-        print("Tip: on a GPU box, omit --no-share so dg dash prints a live public URL.")
-        print()
-        return
-    if host not in {"127.0.0.1", "localhost", "::1"}:
-        print(f"listening on {host}:{port}")
+        print("On a GPU box, prefer pulling to your laptop (no Cloudflare):")
+        print(f"  dg dash --remote user@ssh.runpod.io -i ~/.ssh/id_ed25519 --port {port}")
+        print("Optional public tunnel only if you need it:  dg dash --share")
+    print()
+
+
+_STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
+_MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".map": "application/json",
+}
+
+
+def spa_available() -> bool:
+    return (_STATIC_DIR / "index.html").is_file()
+
+
+def _spa_file(rel: str) -> tuple[bytes, str] | None:
+    """Serve a file under dashboard_static/, or None if missing."""
+    rel = rel.lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        return None
+    path = (_STATIC_DIR / rel).resolve()
+    try:
+        path.relative_to(_STATIC_DIR.resolve())
+    except ValueError:
+        return None
+    if not path.is_file():
+        return None
+    return path.read_bytes(), _MIME.get(path.suffix.lower(), "application/octet-stream")
+
+
+def _spa_index() -> tuple[bytes, str]:
+    raw = _spa_file("index.html")
+    if raw is None:
+        raise FileNotFoundError(
+            "SPA index missing — run npm run build in dashboard_frontend/"
+        )
+    return raw
 
 
 def export_static(runs_dir: Path, out_path: Path) -> Path:
@@ -347,13 +391,27 @@ def export_static(runs_dir: Path, out_path: Path) -> Path:
 
 
 def _route(path: str, runs_dir: Path) -> tuple[str | bytes, str]:
-    if path in {"/", "/index.html"}:
-        return _page_index(runs_dir), "text/html; charset=utf-8"
     if path == "/api/overview" or path == "/api/runs" or path.startswith("/api/runs/"):
         return _api(path, runs_dir), "application/json; charset=utf-8"
+
+    use_spa = spa_available()
+    if use_spa:
+        if path.startswith("/assets/"):
+            asset = _spa_file(path)
+            if asset is not None:
+                return asset
+            raise FileNotFoundError(path)
+        if path in {"/", "/index.html"} or path.startswith("/run/"):
+            return _spa_index()
+        asset = _spa_file(path)
+        if asset is not None:
+            return asset
+
+    # Legacy HTML fallback when SPA has not been built.
+    if path in {"/", "/index.html"}:
+        return _page_index(runs_dir), "text/html; charset=utf-8"
     if path.startswith("/run/"):
         parts = [p for p in path.split("/") if p]
-        # /run/<stem> or /run/<stem>/rollout/<id>
         if len(parts) == 2:
             return _page_run(runs_dir, parts[1]), "text/html; charset=utf-8"
         if len(parts) == 4 and parts[2] == "rollout":
@@ -366,20 +424,18 @@ def _route(path: str, runs_dir: Path) -> tuple[str | bytes, str]:
 
 def _api(path: str, runs_dir: Path) -> str:
     parts = [p for p in path.split("/") if p]
-    # api / runs
     if parts == ["api", "runs"]:
         return json.dumps(data.list_run_files(runs_dir))
-    # api / overview — fingerprint for index auto-refresh (includes progress-only)
     if parts == ["api", "overview"]:
         return json.dumps(_overview_snapshot(runs_dir))
-    # api / runs / <stem> / live — works before JSONL exists
     if len(parts) == 4 and parts[3] == "live":
         return json.dumps(_run_live_snapshot(runs_dir, parts[2]))
-    # api / runs / <stem>
+    if len(parts) == 4 and parts[3] == "charts":
+        path_file = _resolve_run(runs_dir, parts[2])
+        return json.dumps(data.run_charts(path_file))
     if len(parts) == 3:
         path_file = _resolve_run(runs_dir, parts[2])
         return json.dumps(data.run_detail(path_file))
-    # api / runs / <stem> / rollouts / <id>
     if len(parts) == 5 and parts[3] == "rollouts":
         path_file = _resolve_run(runs_dir, parts[2])
         return json.dumps(data.rollout_detail(path_file, parts[4]))
@@ -395,6 +451,11 @@ def _overview_snapshot(runs_dir: Path) -> dict[str, Any]:
                 "stem": item.get("stem") or item.get("name"),
                 "n": item.get("n_rollouts", 0),
                 "statuses": item.get("statuses"),
+                "run_status": item.get("run_status"),
+                "phase": item.get("phase"),
+                "mean_reward": item.get("mean_reward"),
+                "mtime": item.get("mtime"),
+                "progress_updated_at": item.get("progress_updated_at"),
             }
         )
     progress = []
@@ -406,6 +467,7 @@ def _overview_snapshot(runs_dir: Path) -> dict[str, Any]:
                 "phase": prog.get("phase"),
                 "message": prog.get("message"),
                 "updated_at": prog.get("updated_at"),
+                "status": prog.get("status"),
             }
         )
     return {"runs": runs, "progress": progress}
@@ -717,7 +779,7 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
         or (
             f"{n_rollouts} rollout(s) ready"
             if ready
-            else "Worker is starting…"
+            else "Waiting for worker phases (dataset → model → Ray/Slime → sandboxes)…"
         )
     )
     failed = phase == "failed" or prog.get("status") == "failed"
@@ -736,17 +798,37 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
         or status in {"completed", "failed"}
         or phase in {"completed", "failed"}
     )
-    if ready and not failed:
+    # Only promote phase to "live" while still actively running.
+    if ready and not failed and not done and status == "running":
         phase = "live"
-        failed = False
+    # Freeze elapsed for terminal runs (UI must not keep ticking).
+    elapsed_s = prog.get("elapsed_s")
+    if done and not isinstance(elapsed_s, (int, float)):
+        # Best-effort: activity first→last timestamps.
+        activity = prog.get("activity") if isinstance(prog.get("activity"), list) else []
+        times = [
+            float(a["t"])
+            for a in activity
+            if isinstance(a, dict) and isinstance(a.get("t"), (int, float))
+        ]
+        if len(times) >= 2:
+            elapsed_s = max(0.0, times[-1] - times[0])
+        elif isinstance(prog.get("updated_at"), (int, float)) and times:
+            elapsed_s = max(0.0, float(prog["updated_at"]) - times[0])
     log_tail = prog.get("log_tail") or []
     if not isinstance(log_tail, list):
         log_tail = []
+    started_at = prog.get("started_at")
+    if started_at is None and isinstance(prog.get("activity"), list) and prog["activity"]:
+        first = prog["activity"][0]
+        if isinstance(first, dict) and first.get("t") is not None:
+            started_at = first["t"]
     return {
         "phase": phase,
         "message": message,
         "detail": prog.get("detail"),
-        "elapsed_s": prog.get("elapsed_s"),
+        "elapsed_s": elapsed_s,
+        "started_at": started_at,
         "log_tail": [str(x) for x in log_tail[-12:]],
         "activity": prog.get("activity") if isinstance(prog.get("activity"), list) else [],
         "n_rollouts": n_rollouts,
@@ -1185,7 +1267,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Bind address (default: 127.0.0.1, or 0.0.0.0 on RunPod)",
     )
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=3000)
     parser.add_argument(
         "--no-open",
         action="store_true",
@@ -1212,7 +1294,7 @@ def main(argv: list[str] | None = None) -> int:
         "--remote",
         default=None,
         metavar="USER@HOST",
-        help="Pull runs/ first (optional)",
+        help="Escape hatch: pull from explicit SSH host (default: auto RunPod from .env)",
     )
     parser.add_argument(
         "--ssh-port",
@@ -1223,8 +1305,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--remote-root",
         default=None,
-        help="Remote repo dir under $HOME (default: daytona-training-gym-spec "
-        "or DAYTONA_GYM_SSH_ROOT)",
+        help="Remote repo dir (default: /root/daytona-training-gym-spec "
+        "or DAYTONA_GYM_REMOTE_REPO)",
     )
     parser.add_argument(
         "--identity",
@@ -1238,6 +1320,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Sync remote runs/ then exit (no HTTP server)",
     )
+    parser.add_argument(
+        "--remote-interval",
+        type=float,
+        default=8.0,
+        help="Seconds between remote pull loops while serving (default: 8)",
+    )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Do not auto-pull from RunPod; serve local runs/ only",
+    )
     args = parser.parse_args(argv)
 
     if args.export is not None:
@@ -1246,23 +1339,62 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     remote = resolve_remote_target(args.remote)
+    remote_identity = args.identity
+    remote_root = args.remote_root
+    if remote is None and not args.local_only:
+        auto = resolve_auto_remote()
+        if auto is not None:
+            remote, auto_ident, auto_root = auto
+            if remote_identity is None:
+                remote_identity = auto_ident
+            if remote_root is None:
+                remote_root = auto_root
+            print(f"auto remote: {remote}", flush=True)
+
+    stop_sync = threading.Event()
+
+    def _sync_once(*, label: str = "syncing") -> int:
+        assert remote is not None
+        print(f"{label} runs/ from {remote} …")
+        sync_runs_from_ssh(
+            target=remote,
+            local_runs=args.runs_dir,
+            remote_root=remote_root,
+            identity=remote_identity,
+            ssh_port=args.ssh_port,
+        )
+        n = len(list(Path(args.runs_dir).glob("*.jsonl")))
+        print(f"synced {n} jsonl file(s) → {Path(args.runs_dir).resolve()}")
+        return n
+
     if remote:
-        print(f"syncing runs/ from {remote} …")
         try:
-            sync_runs_from_ssh(
-                target=remote,
-                local_runs=args.runs_dir,
-                remote_root=args.remote_root,
-                identity=args.identity,
-                ssh_port=args.ssh_port,
-            )
+            _sync_once()
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        n = len(list(Path(args.runs_dir).glob("*.jsonl")))
-        print(f"synced {n} jsonl file(s) → {Path(args.runs_dir).resolve()}")
         if args.pull_only:
             return 0
+
+        def _sync_loop() -> None:
+            while not stop_sync.wait(max(3.0, float(args.remote_interval))):
+                try:
+                    sync_runs_from_ssh(
+                        target=remote,
+                        local_runs=args.runs_dir,
+                        remote_root=remote_root,
+                        identity=remote_identity,
+                        ssh_port=args.ssh_port,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"remote sync warning: {exc}", file=sys.stderr)
+
+        threading.Thread(target=_sync_loop, name="dash-remote-sync", daemon=True).start()
+        print(
+            f"remote pull loop every {args.remote_interval:g}s "
+            "(Ctrl+C stops dash + sync)",
+            flush=True,
+        )
 
     context = detect_serve_context()
     host = args.host
@@ -1275,15 +1407,27 @@ def main(argv: list[str] | None = None) -> int:
     elif args.share:
         share = True
     else:
-        share = None  # auto: on for runpod/ssh
+        share = None  # default: loopback (Cloudflare only with --share)
 
-    serve(
-        runs_dir=args.runs_dir,
-        host=host,
-        port=args.port,
-        open_browser=not args.no_open,
-        share=share,
-    )
+    if spa_available():
+        print(f"SPA dashboard  {_STATIC_DIR}", flush=True)
+    else:
+        print(
+            "SPA not built — serving legacy HTML "
+            "(cd daytona_gym/telemetry/dashboard_frontend && npm run build)",
+            flush=True,
+        )
+
+    try:
+        serve(
+            runs_dir=args.runs_dir,
+            host=host,
+            port=args.port,
+            open_browser=not args.no_open,
+            share=share,
+        )
+    finally:
+        stop_sync.set()
     return 0
 
 

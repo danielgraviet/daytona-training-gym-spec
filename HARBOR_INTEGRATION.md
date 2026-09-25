@@ -1,6 +1,6 @@
 # Harbor Integration
 
-Status: **planned gym backend** (after Slime MVP / gym facade direction). Spec note only — not implemented yet.
+Status: **gym backend stub** (`daytona_gym.gym.harbor.HarborBackend` under `TrainConfig(backend="harbor")`). Full Harbor×Daytona plugin not implemented yet — `launch()` raises a typed error. Not CLI-first.
 
 Partner-facing north star is Modal-shaped (`TrainConfig.launch()`), **not** raw Harbor CLI. See `COMPETITIVE_MODAL_GYM.md` and `PRODUCT_DECISIONS.md` §2 / §15 / §16.
 

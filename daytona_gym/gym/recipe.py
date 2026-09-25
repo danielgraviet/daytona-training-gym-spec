@@ -57,3 +57,13 @@ def Qwen25_3B_Recipe(**overrides: object) -> CodingRecipe:
 def Qwen25_05B_Recipe(**overrides: object) -> CodingRecipe:
     """Coding GRPO recipe paired with ``Qwen25_05B()``."""
     return _recipe(**overrides)
+
+
+def Qwen25_7B_Recipe(**overrides: object) -> CodingRecipe:
+    """Coding GRPO recipe paired with ``Qwen25_7B()``."""
+    return _recipe(**{"max_response_len": 1024, **overrides})
+
+
+def Qwen25_14B_Recipe(**overrides: object) -> CodingRecipe:
+    """Coding GRPO recipe paired with ``Qwen25_14B()``."""
+    return _recipe(**{"max_response_len": 1536, **overrides})

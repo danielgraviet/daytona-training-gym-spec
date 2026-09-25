@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from daytona_gym.gym.compute import LocalSlimeCompute
-from daytona_gym.gym.dataset import PromptJsonlDataset
+from daytona_gym.gym.dataset import (
+    AnyDataset,
+    PromptJsonlDataset,
+    materialize_dataset,
+)
+from daytona_gym.gym.harbor import HarborBackend, HarborRecipe, resolve_backend
 from daytona_gym.gym.launch import build_plan, execute_plan, plan_to_training_run
 from daytona_gym.gym.models import SoftSlimeModel
 from daytona_gym.gym.recipe import CodingRecipe
@@ -27,20 +32,27 @@ class TrainConfig:
 
     BYO remote GPU::
 
-        TrainConfig(...).launch(worker=SshWorker(host="root@IP", port=..., identity="..."))
+        TrainConfig(...).launch(worker=runpod_worker(), detach=True)
 
     Advanced: pass ``compute=LocalSlimeCompute(...)`` instead of ``model``.
+
+    ``backend=\"harbor\"`` selects the second gym adapter (not implemented yet).
     """
 
-    dataset: PromptJsonlDataset
+    dataset: AnyDataset
     recipe: CodingRecipe
     model: SoftSlimeModel | None = None
     compute: LocalSlimeCompute | None = None
     run_name: str | None = None
     telemetry_path: str | Path | None = None
     repo: str | Path | None = None
+    backend: str = "slime"
+    harbor: HarborBackend | HarborRecipe | None = None
 
     def __post_init__(self) -> None:
+        self.backend = resolve_backend(self.backend)
+        if self.backend == "harbor":
+            return
         if self.model is None and self.compute is None:
             raise DaytonaError(
                 ErrorCode.USER_CODE_ERROR,
@@ -53,6 +65,17 @@ class TrainConfig:
         assert self.model is not None
         return self.model.to_compute(repo=self.repo)
 
+    def ensure_dataset(self, *, runs_dir: Path | None = None) -> PromptJsonlDataset:
+        """Materialize HF/Harbor datasets to JSONL; return a PromptJsonlDataset."""
+        if isinstance(self.dataset, PromptJsonlDataset):
+            return self.dataset
+        compute = self.resolved_compute()
+        repo = compute.resolved_repo()
+        base = runs_dir or (repo / "runs")
+        materialized = materialize_dataset(self.dataset, runs_dir=base)
+        self.dataset = materialized
+        return materialized
+
     def validate(self, *, require_existing_paths: bool = True) -> None:
         if self.recipe.batch_size < 1 or self.recipe.n_samples < 1:
             raise DaytonaError(
@@ -61,13 +84,15 @@ class TrainConfig:
             )
         compute = self.resolved_compute()
         if require_existing_paths:
+            if not isinstance(self.dataset, PromptJsonlDataset):
+                self.ensure_dataset()
             missing: list[str] = []
             for label, path in (
                 ("slime_root", compute.slime_root_path()),
                 ("megatron_root", compute.megatron_root_path()),
                 ("hf_checkpoint", compute.hf_checkpoint_path()),
                 ("ref_load", compute.ref_load_path()),
-                ("dataset", self.dataset.resolved_path()),
+                ("dataset", self.dataset.resolved_path()),  # type: ignore[union-attr]
             ):
                 if not path.exists():
                     missing.append(f"{label}={path}")
@@ -98,19 +123,17 @@ class TrainConfig:
         ``open`` (default: True after a real launch) starts the live dashboard
         and sets ``run.dashboard_url`` (Cloudflare tunnel on RunPod/SSH).
 
-        ``detach=True``: return as soon as ``run_id`` + ``dashboard_url`` are
-        ready; training keeps running on the worker (Modal-shaped handle).
-        Implies ``open=True`` (dashboard URL is the whole point).
+        ``detach=True``: return as soon as ``run_id`` is ready; training keeps
+        running on the worker. Prefer laptop ``dashboard_url`` (localhost:3000).
         """
         from daytona_gym.gym.worker import LocalWorker
 
-        if detach and open is False:
-            raise DaytonaError(
-                ErrorCode.USER_CODE_ERROR,
-                "detach=True requires a dashboard URL (do not pass open=False)",
+        if self.backend == "harbor":
+            hb = self.harbor if isinstance(self.harbor, HarborBackend) else HarborBackend(
+                recipe=self.harbor if isinstance(self.harbor, HarborRecipe) else HarborRecipe()
             )
-        if detach:
-            open = True
+            hb.launch(config=self, dry_run=dry_run)
+            raise AssertionError("unreachable")
 
         w: Worker = worker if worker is not None else LocalWorker()
         return w.launch(

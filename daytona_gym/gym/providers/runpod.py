@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -127,12 +128,21 @@ def runpod_worker(
     user: str = "root",
     prefer: Literal["proxy", "direct", "auto"] = "proxy",
     git_url: str | None = None,
+    create: bool = False,
+    create_kwargs: dict[str, Any] | None = None,
 ) -> SshWorker:
-    """Laptop agent default: proxy SSH + PTY shell (works without container sshd)."""
+    """Laptop agent default: proxy SSH + PTY shell (works without container sshd).
+
+    Pass ``create=True`` to provision a new slime pod via the RunPod API first.
+    """
     from daytona_gym.envfile import load_dotenv
 
     load_dotenv()
-    w = resolve_runpod_ssh(pod_id, api_key=api_key, user=user).to_worker(
+    pid = pod_id
+    if create:
+        info = create_pod(api_key=api_key, **(create_kwargs or {}))
+        pid = info.pod_id
+    w = resolve_runpod_ssh(pid, api_key=api_key, user=user).to_worker(
         identity=identity,
         remote_repo=remote_repo,
         pull=pull,
@@ -143,6 +153,132 @@ def runpod_worker(
     elif os.environ.get("DAYTONA_GYM_GIT_URL"):
         w.git_url = os.environ["DAYTONA_GYM_GIT_URL"]
     return w
+
+
+@dataclass(frozen=True)
+class CreatedPod:
+    pod_id: str
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+def create_pod(
+    *,
+    api_key: str | None = None,
+    name: str | None = None,
+    image: str = "slimerl/slime:latest",
+    gpu_type_id: str | None = None,
+    gpu_count: int = 1,
+    cloud_type: str = "SECURE",
+    volume_in_gb: int = 50,
+    container_disk_in_gb: int = 50,
+    ports: str = "22/tcp",
+    docker_start_cmd: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    wait_running: bool = True,
+    wait_timeout_seconds: float = 600,
+) -> CreatedPod:
+    """Provision a RunPod GPU pod for BYO Slime training (``sleep infinity``).
+
+    Requires ``RUNPOD_API_KEY``. Default image is ``slimerl/slime:latest``.
+    SSH keys must already be configured on the RunPod account.
+    """
+    key = (api_key or os.environ.get("RUNPOD_API_KEY") or "").strip()
+    if not key:
+        raise DaytonaError(
+            ErrorCode.USER_CODE_ERROR,
+            "RUNPOD_API_KEY required to create a pod",
+        )
+    gpu = (
+        gpu_type_id
+        or os.environ.get("RUNPOD_GPU_TYPE_ID")
+        or "NVIDIA H100 80GB HBM3"
+    )
+    body: dict[str, Any] = {
+        "name": name or f"daytona-gym-{int(time.time())}",
+        "imageName": image,
+        "gpuTypeIds": [gpu],
+        "gpuCount": int(gpu_count),
+        "cloudType": cloud_type,
+        "volumeInGb": int(volume_in_gb),
+        "containerDiskInGb": int(container_disk_in_gb),
+        "ports": ports,
+        "dockerStartCmd": docker_start_cmd or ["bash", "-lc", "sleep infinity"],
+        "env": env or {},
+    }
+    data = _http_post(f"{_API_V1}/pods", api_key=key, body=body)
+    pod_id = str(data.get("id") or data.get("podId") or "")
+    if not pod_id:
+        raise DaytonaError(
+            ErrorCode.PLATFORM_ERROR,
+            f"RunPod create returned no pod id: {data!r}"[:400],
+        )
+    if wait_running:
+        _wait_pod_running(pod_id, api_key=key, timeout=wait_timeout_seconds)
+    return CreatedPod(pod_id=pod_id, raw=data)
+
+
+def _wait_pod_running(pod_id: str, *, api_key: str, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            data = _get_pod_v2(pod_id, api_key=api_key)
+        except DaytonaError as exc:
+            last = str(exc)
+            time.sleep(5)
+            continue
+        status = str(
+            data.get("desiredStatus")
+            or data.get("status")
+            or data.get("runtime", {}).get("uptimeInSeconds")
+            or ""
+        ).upper()
+        # v2 uses desiredStatus RUNNING once up; also accept runtime presence.
+        runtime = data.get("runtime") or {}
+        if status == "RUNNING" or (isinstance(runtime, dict) and runtime.get("ports")):
+            # Prefer having proxy SSH ready.
+            info = parse_runpod_ssh(data)
+            if info.proxy_user or (info.public_ip and info.ssh_port):
+                return
+        last = status or "unknown"
+        time.sleep(5)
+    raise DaytonaError(
+        ErrorCode.PLATFORM_ERROR,
+        f"pod {pod_id} not ready within {timeout:.0f}s (last={last})",
+    )
+
+
+def _http_post(url: str, *, api_key: str, body: dict[str, Any]) -> dict[str, Any]:
+    payload = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": _UA,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:400]
+        raise DaytonaError(
+            ErrorCode.PLATFORM_ERROR,
+            f"RunPod POST {url} failed: HTTP {exc.code} {detail}",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise DaytonaError(
+            ErrorCode.PLATFORM_ERROR,
+            f"RunPod API unreachable: {exc}",
+        ) from exc
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise DaytonaError(ErrorCode.PLATFORM_ERROR, "unexpected RunPod create payload")
+    return data
 
 
 def parse_runpod_ssh(data: dict[str, Any], *, user: str = "root") -> RunPodSshInfo:

@@ -1,4 +1,4 @@
-"""JSON/HTML-friendly views over telemetry JSONL (for the basic local dashboard)."""
+"""JSON-friendly views over telemetry JSONL (for the local / SPA dashboard)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from daytona_gym.telemetry import progress as run_progress
 from daytona_gym.telemetry.inspect import (
     _outcome_fields,
     _rollout_ids,
@@ -19,26 +20,54 @@ from daytona_gym.telemetry.store import (
 )
 
 
+def _progress_status(runs_dir: Path, stem: str) -> dict[str, Any]:
+    prog = run_progress.read_progress(runs_dir, stem) or {}
+    phase = str(prog.get("phase") or "")
+    status = str(prog.get("status") or "")
+    if not status:
+        if phase == "failed" or prog.get("failed"):
+            status = "failed"
+        elif phase in {"done", "completed"} or prog.get("done"):
+            status = "completed"
+        elif phase:
+            status = "running"
+        else:
+            status = "pending"
+    return {
+        "run_status": status,
+        "phase": phase or None,
+        "progress_message": prog.get("message"),
+        "progress_updated_at": prog.get("updated_at"),
+    }
+
+
 def list_run_files(runs_dir: Path) -> list[dict[str, Any]]:
     runs_dir = Path(runs_dir)
     if not runs_dir.is_dir():
         return []
     out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for path in sorted(runs_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        seen.add(path.stem)
         try:
             store = InMemoryTelemetryStore.load_jsonl(path)
             ids = _rollout_ids(store)
             summary = summarize_run(store, ids)
-            out.append(
-                {
-                    "name": path.name,
-                    "stem": path.stem,
-                    "path": str(path),
-                    "n_rollouts": len(ids),
-                    "mtime": path.stat().st_mtime,
-                    **summary,
-                }
-            )
+            item = {
+                "name": path.name,
+                "stem": path.stem,
+                "path": str(path),
+                "n_rollouts": len(ids),
+                "mtime": path.stat().st_mtime,
+                **summary,
+                **_progress_status(runs_dir, path.stem),
+            }
+            # Prefer terminal progress status when present.
+            if item.get("run_status") in {"completed", "failed"}:
+                pass
+            elif ids:
+                item["run_status"] = "running"
+            out.append(item)
         except Exception as exc:  # noqa: BLE001 — one bad file shouldn't kill the list
             out.append(
                 {
@@ -47,8 +76,28 @@ def list_run_files(runs_dir: Path) -> list[dict[str, Any]]:
                     "path": str(path),
                     "n_rollouts": 0,
                     "error": str(exc),
+                    **_progress_status(runs_dir, path.stem),
                 }
             )
+    # Progress-only runs (JSONL not yet written).
+    for stem in run_progress.list_progress_stems(runs_dir):
+        if stem in seen:
+            continue
+        prog = run_progress.read_progress(runs_dir, stem) or {}
+        out.append(
+            {
+                "name": f"{stem}.jsonl",
+                "stem": stem,
+                "path": str(runs_dir / f"{stem}.jsonl"),
+                "n_rollouts": 0,
+                "mtime": float(prog.get("updated_at") or 0),
+                "statuses": {},
+                "mean_reward": None,
+                "pending": True,
+                **_progress_status(runs_dir, stem),
+            }
+        )
+    out.sort(key=lambda r: float(r.get("mtime") or 0), reverse=True)
     return out
 
 
@@ -136,6 +185,74 @@ def rollout_detail(path: Path, rollout_id: str) -> dict[str, Any]:
         "wall_seconds": timeline[0].duration_seconds if timeline else None,
         "steps": steps,
         "wall_decomposition": dict(decomp),
+    }
+
+
+def run_charts(path: Path) -> dict[str, Any]:
+    """Series for SPA charts: reward over index, status histogram, wall decomp."""
+    store = InMemoryTelemetryStore.load_jsonl(path)
+    ids = _rollout_ids(store)
+    reward_series: list[dict[str, Any]] = []
+    wall_series: list[dict[str, Any]] = []
+    status_counts: Counter[str] = Counter()
+    wall_buckets: Counter[str] = Counter()
+    gpu_util: list[dict[str, Any]] = []
+    gpu_mem: list[dict[str, Any]] = []
+
+    for i, rollout_id in enumerate(ids):
+        timeline = reconstruct_rollout(store, rollout_id)
+        outcome = _outcome_fields(store, rollout_id, timeline)
+        status = str(outcome.get("status") or "?")
+        status_counts[status] += 1
+        reward = outcome.get("reward")
+        wall = timeline[0].duration_seconds if timeline else None
+        reward_series.append(
+            {
+                "x": i,
+                "rollout_id": rollout_id,
+                "y": float(reward) if isinstance(reward, (int, float)) else None,
+                "status": status,
+            }
+        )
+        wall_series.append(
+            {
+                "x": i,
+                "rollout_id": rollout_id,
+                "y": float(wall) if wall is not None else None,
+            }
+        )
+        decomp = wall_time_decomposition(store.spans_for_rollout(rollout_id))
+        for key, value in decomp.items():
+            wall_buckets[str(key)] += float(value)
+
+    for sample in store.metrics_named("gpu.utilization"):
+        gpu_util.append(
+            {
+                "t": sample.recorded_at,
+                "y": float(sample.value),
+                **(sample.labels or {}),
+            }
+        )
+    for sample in store.metrics_named("gpu.memory_used_mb"):
+        gpu_mem.append(
+            {
+                "t": sample.recorded_at,
+                "y": float(sample.value),
+                **(sample.labels or {}),
+            }
+        )
+
+    return {
+        "name": path.name,
+        "stem": path.stem,
+        "n_rollouts": len(ids),
+        "reward": reward_series,
+        "wall": wall_series,
+        "status_histogram": dict(status_counts),
+        "wall_decomposition": dict(wall_buckets),
+        "gpu_utilization": gpu_util,
+        "gpu_memory_mb": gpu_mem,
+        "summary": summarize_run(store, ids),
     }
 
 

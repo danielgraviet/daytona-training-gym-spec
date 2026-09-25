@@ -45,17 +45,39 @@ _BOOT_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def build_plan(config: TrainConfig, *, run_id: str | None = None) -> LaunchPlan:
-    config.validate(require_existing_paths=False)
+    from daytona_gym.gym.dataset import PromptJsonlDataset
+
     rid = run_id or config.run_name or new_run_id()
     compute = config.resolved_compute()
     recipe = config.recipe
-    dataset = config.dataset
     repo = compute.resolved_repo()
     telemetry = (
         Path(config.telemetry_path).expanduser().resolve()
         if config.telemetry_path
         else (repo / "runs" / f"{rid}.jsonl")
     )
+    # Prefer already-materialized JSONL. Do not download HF/Harbor during dry-run
+    # on a laptop — worker ``remote_job`` / ``validate(require_existing_paths)``
+    # performs materialization.
+    if isinstance(config.dataset, PromptJsonlDataset):
+        dataset = config.dataset
+    else:
+        key = config.dataset.cache_key() or "dataset"
+        pending = telemetry.parent / "data" / f"{key}.jsonl"
+        if pending.is_file() and pending.stat().st_size > 0:
+            dataset = PromptJsonlDataset(
+                path=pending,
+                input_key=config.dataset.input_key,
+                label_key=config.dataset.label_key,
+            )
+            config.dataset = dataset
+        else:
+            dataset = PromptJsonlDataset(
+                path=pending,
+                input_key=config.dataset.input_key,
+                label_key=config.dataset.label_key,
+            )
+    config.validate(require_existing_paths=False)
     key_file = Path(
         os.environ.get("DAYTONA_API_KEY_FILE") or "/tmp/daytona_gym_api_key"
     ).expanduser()
@@ -171,12 +193,26 @@ def execute_plan(
         "Submitting Slime Ray job…",
         detail="ray job submit → train.py",
     )
-    returncode = _run_slime_job(
-        submit,
-        cwd=plan.slime_root,
-        env=env,
-        on_phase=on_phase,
-    )
+    gpu_sampler = None
+    if os.environ.get("DAYTONA_GYM_GPU_METRICS", "1") not in {"0", "false", "False"}:
+        from daytona_gym.telemetry.gpu_metrics import JsonlGpuMetricsSampler
+
+        gpu_sampler = JsonlGpuMetricsSampler(
+            plan.telemetry_path,
+            interval_seconds=float(os.environ.get("DAYTONA_GYM_GPU_METRICS_INTERVAL", "15")),
+            run_id=plan.run_id,
+        )
+        gpu_sampler.start()
+    try:
+        returncode = _run_slime_job(
+            submit,
+            cwd=plan.slime_root,
+            env=env,
+            on_phase=on_phase,
+        )
+    finally:
+        if gpu_sampler is not None:
+            gpu_sampler.stop()
     return TrainingRun(
         run_id=plan.run_id,
         telemetry_path=str(plan.telemetry_path),

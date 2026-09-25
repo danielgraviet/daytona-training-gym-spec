@@ -46,6 +46,7 @@ def test_remote_payload_roundtrip(tmp_path: Path) -> None:
         open_browser=False,
     )
     assert payload["run_name"] == "run_worker_test"
+    assert payload["dataset"]["kind"] == "prompt_jsonl"
     assert payload["dataset"]["path"].endswith(
         "examples/coding_dogfood/prompts/coding_one.jsonl"
     )
@@ -89,7 +90,7 @@ def test_ssh_worker_parses_markers(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DAYTONA_API_KEY", "test-key")
 
     def fake_run(cmd, capture_output=False, text=False):  # noqa: ANN001
-        assert cmd[0] == "scp"
+        assert cmd[0] in {"scp", "ssh"}
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     class FakePopen:
@@ -110,11 +111,15 @@ def test_ssh_worker_parses_markers(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(
+        "daytona_gym.gym.worker._sync_package_via_scp", lambda _w: None
+    )
 
     run = cfg.launch(worker=worker, dry_run=False, open=True)
     assert isinstance(run, TrainingRun)
     assert run.run_id == "run_remote_1"
-    assert run.dashboard_url == "https://x.trycloudflare.com/run/run_remote_1"
+    # Non-detached: worker CF URL may still appear; prefer that when no laptop dash.
+    assert run.dashboard_url is not None
     assert run.returncode == 0
 
 
@@ -134,7 +139,7 @@ def test_ssh_worker_parses_detached_markers(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setenv("DAYTONA_API_KEY", "test-key")
 
     def fake_run(cmd, capture_output=False, text=False):  # noqa: ANN001
-        assert cmd[0] == "scp"
+        assert cmd[0] in {"scp", "ssh"}
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     class FakePopen:
@@ -154,13 +159,26 @@ def test_ssh_worker_parses_detached_markers(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(
+        "daytona_gym.gym.worker._sync_package_via_scp", lambda _w: None
+    )
+    monkeypatch.setattr(
+        "daytona_gym.gym.worker._start_laptop_dash_for_run",
+        lambda **_k: (
+            "http://127.0.0.1:3000/run/run_det_1",
+            type("H", (), {"stop": lambda self: None})(),
+        ),
+    )
 
     run = cfg.launch(worker=worker, dry_run=False, open=True, detach=True)
     assert isinstance(run, TrainingRun)
     assert run.detached is True
     assert run.returncode is None
     assert run.run_id == "run_det_1"
-    assert run.dashboard_url == "https://x.trycloudflare.com/run/run_det_1"
+    assert run.dashboard_url is not None
+    assert "127.0.0.1" in run.dashboard_url
+    assert run.run_id in run.dashboard_url
+    run.close_dashboard()
 
 
 def test_ensure_remote_repo_cmd_clones_when_missing() -> None:

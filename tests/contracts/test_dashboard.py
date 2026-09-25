@@ -87,19 +87,34 @@ async def test_dashboard_http_pages(tmp_path: Path) -> None:
         res = conn.getresponse()
         body = res.read().decode()
         assert res.status == 200
-        assert "dogfood.jsonl" in body
+        # SPA shell (Svelte) — run list is client-fetched from /api/runs
+        assert "id=\"app\"" in body or "dogfood" in body
+        assert dash_mod.spa_available()
 
         conn.request("GET", "/run/dogfood")
         res = conn.getresponse()
         body = res.read().decode()
         assert res.status == 200
-        assert "rollout_0" in body
+        assert "id=\"app\"" in body or "rollout_0" in body
 
-        conn.request("GET", "/run/dogfood/rollout/rollout_0")
+        conn.request("GET", "/api/runs/dogfood")
         res = conn.getresponse()
-        body = res.read().decode()
-        assert res.status == 200
-        assert any(token in body for token in ("provision", "generate", "run_tests", "reward"))
+        detail = json.loads(res.read().decode())
+        assert detail["stem"] == "dogfood"
+        assert detail["rollouts"]
+
+        conn.request("GET", "/api/runs/dogfood/charts")
+        res = conn.getresponse()
+        charts = json.loads(res.read().decode())
+        assert charts["n_rollouts"] >= 1
+        assert "reward" in charts
+
+        rid = detail["rollouts"][0]["rollout_id"]
+        conn.request("GET", f"/api/runs/dogfood/rollouts/{rid}")
+        res = conn.getresponse()
+        rollout = json.loads(res.read().decode())
+        assert rollout["rollout_id"] == rid
+        assert rollout["steps"] or rollout.get("wall_decomposition") is not None
 
         conn.request("GET", "/api/runs")
         res = conn.getresponse()
@@ -145,26 +160,30 @@ async def test_dashboard_pending_run_page(tmp_path: Path) -> None:
         res = conn.getresponse()
         body = res.read().decode()
         assert res.status == 200
-        assert "Download model weights" in body
-        assert "EventSource" in body
-        assert "/live" in body  # polling fallback
-        assert "http-equiv" not in body.lower()
+        assert "id=\"app\"" in body or "Download model weights" in body
         assert "404" not in body
         conn.request("GET", "/")
         res = conn.getresponse()
         index = res.read().decode()
-        assert "run_pending_1" in index
-        assert "model_download" in index
-        assert "starting ·" not in index  # no misleading prefix
+        assert res.status == 200
+        assert "id=\"app\"" in index or "run_pending_1" in index
         conn.request("GET", "/api/overview")
         res = conn.getresponse()
         overview = json.loads(res.read().decode())
         assert any(p["stem"] == "run_pending_1" for p in overview["progress"])
+        assert any(
+            r.get("stem") == "run_pending_1" for r in overview.get("runs") or []
+        ) or any(p["stem"] == "run_pending_1" for p in overview["progress"])
         conn.request("GET", "/api/runs/run_pending_1/live")
         res = conn.getresponse()
         live = json.loads(res.read().decode())
         assert live["phase"] == "model_download"
         assert live["failed"] is False
+        assert "message" in live
+        conn.request("GET", "/api/runs")
+        res = conn.getresponse()
+        runs = json.loads(res.read().decode())
+        assert any(r.get("stem") == "run_pending_1" for r in runs)
         conn.close()
     finally:
         httpd.shutdown()
@@ -237,6 +256,8 @@ def test_cli_help_mentions_dash(capsys) -> None:
     out = capsys.readouterr().out
     assert "dg dash" in out
     assert "--share" in out
+    assert "dg run" in out
+    assert "--remote" in out
 
 
 def test_detect_runpod_and_ssh(monkeypatch) -> None:
@@ -259,7 +280,9 @@ def test_runpod_access_hint(capsys, monkeypatch) -> None:
     ctx = dash_mod.detect_serve_context()
     dash_mod._print_access_hints(ctx, host="0.0.0.0", port=8765)
     out = capsys.readouterr().out
-    assert "live public URL" in out
+    assert "127.0.0.1:8765" in out
+    assert "--remote" in out
+    assert "--share" in out
 
 
 def test_parse_tunnel_url() -> None:

@@ -58,13 +58,14 @@ class TrainingRun:
         self,
         *,
         share: bool | None = None,
-        port: int = 8765,
+        port: int = 3000,
         open_browser: bool = False,
     ) -> str:
-        """Start the live dashboard (tunnel on RunPod/SSH by default).
+        """Start the live dashboard on loopback (Cloudflare only if ``share=True``).
 
         Returns a URL deep-linked to this run when possible. Keeps serving in
         the background until ``close_dashboard()`` / ``wait_dashboard()`` / process exit.
+        Prefer laptop ``dg dash`` (auto RunPod sync) over worker tunnels.
         """
         if self._dashboard is not None and self.dashboard_url:
             return self.dashboard_url
@@ -72,16 +73,19 @@ class TrainingRun:
         from daytona_gym.telemetry.dashboard import start_dashboard
 
         runs_dir = Path(self.telemetry_path).expanduser().resolve().parent
+        want_share = bool(share)
         handle = start_dashboard(
             runs_dir=runs_dir,
             port=port,
             open_browser=open_browser,
-            share=share,
+            share=want_share,
             quiet=True,
         )
         stem = Path(self.telemetry_path).stem
-        base = handle.url.rstrip("/")
-        # Deep-link to this run's page when the jsonl exists under runs/
+        if want_share:
+            base = str(handle.url).rstrip("/")
+        else:
+            base = str(getattr(handle, "local_url", None) or handle.url).rstrip("/")
         deep = f"{base}/run/{stem}"
         self._dashboard = handle
         self.dashboard_url = deep
@@ -102,10 +106,9 @@ class TrainingRun:
         url = self.dashboard_url or self._dashboard.url
         print(flush=True)
         print("=" * 60, flush=True)
-        print("  OPEN ON YOUR LAPTOP", flush=True)
+        print("  dashboard (Ctrl+C to stop)", flush=True)
         print(f"  {url}", flush=True)
         print("=" * 60, flush=True)
-        print("  Ctrl+C to stop the dashboard", flush=True)
         print(flush=True)
         try:
             while True:
@@ -130,10 +133,11 @@ class TrainingRun:
     def wait(self, *, timeout: float | None = None, poll_interval: float = 2.0) -> TrainingRun:
         """Block until training finishes. Does not tear down a detached worker.
 
-        Polls the live dashboard API when ``dashboard_url`` is set (laptop →
-        Cloudflare tunnel), else the local progress / status files.
-        Prints Modal-style stage lines as phases change.
+        Polls the live dashboard API when ``dashboard_url`` is set, else local
+        progress / status files. Shows a Rich spinner with phase heartbeats.
         """
+        from daytona_gym.gym.console_ui import WaitProgress
+
         if self.dry_run:
             self.status = "completed"
             self.returncode = 0
@@ -141,26 +145,35 @@ class TrainingRun:
         if self.done():
             return self
 
+        # Dashboard URL already printed at launch when laptop dash started.
+        # Do not print a second "OPEN" banner here.
+
         deadline = None if timeout is None else time.monotonic() + timeout
-        print(
-            f"waiting for training to finish ({self.training_run_id}) …",
-            flush=True,
+        ui = WaitProgress(self.training_run_id, started_at=self._started_at)
+        ui.update(
+            {
+                "phase": "waiting",
+                "message": "Waiting for worker phases (dataset → model → Ray/Slime)",
+            }
         )
         try:
             while True:
                 snap = self._poll_snapshot()
+                ui.update(snap)
                 if snap is not None:
-                    self._emit_stage(snap)
                     self._apply_snapshot(snap)
                     if self.status in {"completed", "failed"}:
+                        ui.finish()
                         return self
                 if deadline is not None and time.monotonic() >= deadline:
+                    ui.finish()
                     raise TimeoutError(
                         f"Timed out after {timeout}s waiting for "
                         f"training_run_id={self.training_run_id}"
                     )
                 time.sleep(max(0.5, float(poll_interval)))
         except KeyboardInterrupt:
+            ui.finish()
             print(flush=True)
             print(
                 f'Disconnected from training "{self.training_run_id}". '
@@ -173,30 +186,28 @@ class TrainingRun:
 
     def result(self, *, timeout: float | None = None) -> TrainingRun:
         """Wait until done, then print a Modal-shaped completion banner."""
+        from daytona_gym.gym.console_ui import banner_complete
+
         self.wait(timeout=timeout)
-        self._print_completion_banner()
+        ok = self.status == "completed" and int(self.returncode or 0) == 0
+        banner_complete(
+            ok=ok,
+            run_id=self.training_run_id,
+            returncode=self.returncode,
+            url=self.dashboard_url,
+        )
         return self
 
     def _print_completion_banner(self) -> None:
+        from daytona_gym.gym.console_ui import banner_complete
+
         ok = self.status == "completed" and int(self.returncode or 0) == 0
-        print(flush=True)
-        print("=" * 60, flush=True)
-        if ok:
-            print("  ✓ training finished", flush=True)
-            print(f"  ✓ Training complete: {self.training_run_id}", flush=True)
-        else:
-            print("  ✗ training failed", flush=True)
-            print(
-                f"  ✗ Training failed: {self.training_run_id}"
-                + (f" (exit={self.returncode})" if self.returncode is not None else ""),
-                flush=True,
-            )
-        if self.dashboard_url:
-            print(f"  → OPEN  {self.dashboard_url}", flush=True)
-        elif self.inspect_hint:
-            print(f"  → inspect  {self.inspect_hint}", flush=True)
-        print("=" * 60, flush=True)
-        print(flush=True)
+        banner_complete(
+            ok=ok,
+            run_id=self.training_run_id,
+            returncode=self.returncode,
+            url=self.dashboard_url,
+        )
 
     def _live_api_url(self) -> str | None:
         if not self.dashboard_url:

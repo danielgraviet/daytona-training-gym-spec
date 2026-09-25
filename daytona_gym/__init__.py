@@ -2,6 +2,10 @@
 
 from daytona_gym.gym import (
     CodingRecipe,
+    HarborBackend,
+    HarborDataset,
+    HarborRecipe,
+    HuggingFaceDataset,
     LocalSlimeCompute,
     LocalWorker,
     PromptJsonlDataset,
@@ -9,12 +13,16 @@ from daytona_gym.gym import (
     Qwen25_05B_Recipe,
     Qwen25_3B,
     Qwen25_3B_Recipe,
+    Qwen25_7B,
+    Qwen25_7B_Recipe,
+    Qwen25_14B,
+    Qwen25_14B_Recipe,
     SoftSlimeModel,
     SshWorker,
     TrainConfig,
     TrainingRun,
 )
-from daytona_gym.gym.providers.runpod import runpod_worker
+from daytona_gym.gym.providers.runpod import create_pod, runpod_worker
 from daytona_gym.runtime.daytona import DaytonaEnvironmentRuntime
 from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
@@ -38,6 +46,10 @@ __all__ = [
     "EnvironmentSpec",
     "ErrorCode",
     "FakeEnvironmentRuntime",
+    "HarborBackend",
+    "HarborDataset",
+    "HarborRecipe",
+    "HuggingFaceDataset",
     "LocalSlimeCompute",
     "LocalWorker",
     "PromptJsonlDataset",
@@ -45,6 +57,10 @@ __all__ = [
     "Qwen25_05B_Recipe",
     "Qwen25_3B",
     "Qwen25_3B_Recipe",
+    "Qwen25_7B",
+    "Qwen25_7B_Recipe",
+    "Qwen25_14B",
+    "Qwen25_14B_Recipe",
     "SoftSlimeModel",
     "SshWorker",
     "ToolAction",
@@ -52,6 +68,7 @@ __all__ = [
     "ToolResult",
     "TrainConfig",
     "TrainingRun",
+    "create_pod",
     "runpod_worker",
     "__version__",
 ]

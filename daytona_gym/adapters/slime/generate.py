@@ -51,11 +51,57 @@ def _resolve_int_arg(args: Any, attr: str, env_name: str, default: int) -> int:
     return int(raw)
 
 
-def _resolve_seed_files(args: Any) -> dict[str, str]:
+def _seed_files_from_sample(sample: Any) -> dict[str, str]:
+    """Prefer per-row Harbor/coding seeds embedded in sample.label / metadata."""
+    label = getattr(sample, "label", None)
+    if isinstance(label, str):
+        try:
+            import json
+
+            label = json.loads(label)
+        except Exception:  # noqa: BLE001
+            label = None
+    if isinstance(label, dict):
+        files = label.get("seed_files")
+        if isinstance(files, dict) and files:
+            return {str(k): str(v) for k, v in files.items()}
+    meta = getattr(sample, "metadata", None) or {}
+    if isinstance(meta, dict):
+        daytona = meta.get("daytona") or {}
+        if isinstance(daytona, dict):
+            files = daytona.get("seed_files")
+            if isinstance(files, dict) and files:
+                return {str(k): str(v) for k, v in files.items()}
+    return {}
+
+
+def _bootstrap_from_sample(sample: Any) -> str | None:
+    label = getattr(sample, "label", None)
+    if isinstance(label, str):
+        try:
+            import json
+
+            label = json.loads(label)
+        except Exception:  # noqa: BLE001
+            label = None
+    if isinstance(label, dict):
+        cmd = label.get("run_tests_command")
+        if isinstance(cmd, str) and cmd.strip():
+            return cmd.strip()
+    return None
+
+
+def _resolve_seed_files(args: Any, sample: Any = None) -> dict[str, str]:
+    if sample is not None:
+        from_sample = _seed_files_from_sample(sample)
+        if from_sample:
+            return from_sample
     files = dict(getattr(args, "daytona_seed_files", None) or {})
     if files:
         return files
-    profile = os.environ.get("DAYTONA_SEED_PROFILE") or getattr(args, "daytona_seed_profile", None)
+    profile = os.environ.get("DAYTONA_SEED_PROFILE") or getattr(
+        args, "daytona_seed_profile", None
+    )
     if profile or _env_truthy("DAYTONA_SEED_CODING", default=False):
         from daytona_gym.adapters.slime._coding_seed import resolve_seed_profile
 
@@ -63,7 +109,11 @@ def _resolve_seed_files(args: Any) -> dict[str, str]:
     return {}
 
 
-def _resolve_bootstrap_run_tests(args: Any) -> str | None:
+def _resolve_bootstrap_run_tests(args: Any, sample: Any = None) -> str | None:
+    if sample is not None:
+        from_sample = _bootstrap_from_sample(sample)
+        if from_sample:
+            return from_sample
     explicit = getattr(args, "daytona_bootstrap_run_tests", None)
     if isinstance(explicit, str) and explicit.strip():
         return explicit.strip()
@@ -96,8 +146,8 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     run_id = str(getattr(args, "daytona_run_id", None) or new_run_id())
     rollout_id = _daytona_rollout_id(sample)
     sample_id = _sample_id(sample)
-    seed_files = _resolve_seed_files(args)
-    bootstrap = _resolve_bootstrap_run_tests(args)
+    seed_files = _resolve_seed_files(args, sample)
+    bootstrap = _resolve_bootstrap_run_tests(args, sample)
     require_passing = _resolve_require_passing_tests(args)
     print(
         f"[daytona-gym] generate seed={list(seed_files.keys())} "

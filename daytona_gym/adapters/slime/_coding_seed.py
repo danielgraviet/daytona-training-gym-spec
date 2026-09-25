@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 CODING_SEED_FILES: dict[str, str] = {
     "broken.py": "def add(a, b):\n    return a - b\n",
     "test_broken.py": (
@@ -47,6 +49,24 @@ def resolve_seed_profile(name: str | None) -> dict[str, str]:
         known = ", ".join(sorted(SEED_PROFILES))
         raise ValueError(f"unknown DAYTONA_SEED_PROFILE={name!r}; expected one of: {known}")
     return dict(files)
+
+
+def seed_files_from_label(label: Any) -> dict[str, str]:
+    """Extract sandbox seed files from a Harbor/coding JSONL label."""
+    if isinstance(label, str):
+        import json
+
+        try:
+            label = json.loads(label)
+        except Exception:  # noqa: BLE001
+            return {}
+    if not isinstance(label, dict):
+        return {}
+    files = label.get("seed_files")
+    if isinstance(files, dict) and files:
+        return {str(k): str(v) for k, v in files.items()}
+    return {}
+
 
 CODING_DOGFOOD_PROMPT = f"""\
 You are fixing a tiny Python bug in a sandbox workspace.
