@@ -2,14 +2,14 @@
 
 Pipe this file into the container (the image already has Slime + daytona_gym):
 
-    docker run --gpus all --rm -i --ipc=host --shm-size=16g \
-      -v ~/gym-models:/models -v ~/gym-work:/workspace \
-      --env-file ~/.daytona-gym.env \
+    docker run --gpus all --rm -i --ipc=host \
+      -v daytona-gym-models:/models --env-file ~/.daytona-gym.env \
       ghcr.io/danielgraviet/daytona-gym-worker:latest python - < examples/gym_sdk/box_worker.py
 
-``~/.daytona-gym.env`` (chmod 600) holds DAYTONA_API_KEY, DAYTONA_GYM_INGEST_URL
-and DAYTONA_GYM_INGEST_TOKEN (plus HF_TOKEN if needed). Models land in
-~/gym-models and are reused next time; runs/ lands in ~/gym-work.
+``daytona-gym-models`` is a Docker named volume (created automatically) so model
+weights survive between runs. Run history goes to the ingest host, so nothing
+else needs to persist on the box. ``~/.daytona-gym.env`` (chmod 600) holds
+DAYTONA_API_KEY, DAYTONA_GYM_INGEST_URL and DAYTONA_GYM_INGEST_TOKEN.
 
 Sized for a 24 GB card (RTX 3090 / 4090): Qwen2.5-0.5B, colocated.
 """
