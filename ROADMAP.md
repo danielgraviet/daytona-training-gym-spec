@@ -14,15 +14,15 @@ how it was verified). ⏳ marks work that is partly done.
 | --- | --- | --- |
 | 0 Hygiene | ✅ done | Tests green, secrets off command lines, docs point here |
 | 1 Flagship analytics | ✅ done (1.2 partial) | Per-step "where time went" + $ — verified live on A100 |
-| 2 Durable telemetry | ✅ built, ⏳ live verification | `dg ingest` + worker shipper + `worker_lost`; needs a hosted deploy + real pod kill |
+| 2 Durable telemetry | ✅ built, ⏳ live verification | `dg ingest` + shipper + `worker_lost`; Daytona-sandbox hosting probed live; needs a real pod-kill run |
 | 3 BYO portability | not started | Worker image, outbound agent, second provider |
 | 4 Real task packs | not started | Dataset-driven seeds, reward callable, repo-scale pack |
 | 5 Analytics-only path | not started | Slime users anywhere get the dashboard via adapter + ingest token |
 
 ### Next up
 
-1. **Decide where `dg ingest` runs** (see Phase 2 → open decision) and do the
-   Phase 2 live verification on a RunPod A100.
+1. **Phase 2 live verification on a RunPod A100** against
+   `dg ingest deploy --daytona` (checklist under Phase 2).
 2. Finish **1.2** (Slime `perf/*` ingest) — the log format is now known from the
    live run, so this is a small parser, not a spike.
 3. Start **Phase 3**.
@@ -188,14 +188,39 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
     process check: `dg ingest` + a fake worker that shipped 6 rollouts then
     `kill -9`'d itself → all 6 rollouts browsable, planted API key absent from
     the store, unauthenticated reads 401, status `worker_lost` after 90s silence.
-- [ ] **Open decision: where `dg ingest` runs in production.** Done when there
-  is one documented deployment with HTTPS.
-  - Options: (a) small VM / Fly / Render with a persistent volume (simplest);
-    (b) a long-lived **Daytona sandbox** with a preview URL (dogfoods Daytona,
-    needs auto-stop disabled + volume); (c) Daytona-hosted multi-tenant service
-    later (needs per-org tokens).
+- [x] **Hosting: long-lived Daytona sandbox (dogfood) — `dg ingest deploy --daytona`.**
+  Done when one command gives an HTTPS ingest URL + token and is safe to re-run.
+  - Note: idempotent — finds the sandbox by label, starts it if stopped,
+    re-asserts auto-stop 0, `pip install`s the gym from `main`, starts
+    `dg ingest` if not healthy, checks `/healthz` through the preview proxy,
+    writes/prints `DAYTONA_GYM_INGEST_URL/TOKEN`. VM/Fly/Render stays the
+    documented fallback (`dg ingest --host 0.0.0.0` behind TLS).
+  - Live probe 2026-09-25 (sandbox created, tested, deleted):
+    | Check | Result |
+    | --- | --- |
+    | Our 401 / JSON passes through the preview proxy unchanged | ✅ |
+    | `Authorization: Bearer` reaches `dg ingest` | ✅ |
+    | 3.3 MB shipped in 1 MB chunks | ✅ 2.2s, 3000/3000 rollouts |
+    | Browser login → cookie gets `Secure` (proxy sets `X-Forwarded-Proto: https`) | ✅ |
+    | `auto_stop_interval=0`, `auto_delete_interval=-1`, `auto_pause_interval` already 0 | ✅ |
+    | Stop → start: preview URL unchanged, data on disk intact | ✅ |
+    | Stop → start: `dg ingest` process survives | ❌ proxy 502 until re-deploy |
+    | Re-run `dg ingest deploy --daytona` after restart | ✅ ~5s, same URL + token |
+    | Default snapshot resources | 1 CPU / 1 GB / **3 GB disk** |
+  - Found + fixed on the way: non-editable installs of this package failed
+    (duplicate `force-include` of `dashboard_static` in `pyproject.toml`); every
+    pod install had used `pip install -e .`, which masked it.
+- [ ] **Ingest sandbox follow-ups.**
+  - [ ] Auto-restart `dg ingest` after a sandbox restart — try an image
+    `ENTRYPOINT` (verify it coexists with Daytona's toolbox daemon); fallback is
+    a watchdog that re-runs deploy when `/healthz` fails.
+  - [ ] Bigger disk: create from a declarative `Image` with `Resources(disk=…)`
+    (snapshot-based create can't set resources; 3 GB ≈ hundreds of runs).
+  - [ ] Periodic backup tarball of the data dir to a Daytona Volume (volumes are
+    object-storage backed — backup target only, not the live store).
+  - [ ] Pin `--spec` to a release/sha instead of `@main` for repeatable deploys.
 - [ ] **Phase 2 exit — verified live on RunPod.** Done when:
-  - [ ] `dg ingest` deployed behind HTTPS with a real token
+  - [ ] `dg ingest deploy --daytona` (HTTPS preview URL + token), env exported on laptop and pod
   - [ ] `python main.py` on the A100 prints the ingest URL (not trycloudflare / 127.0.0.1)
   - [ ] dashboard updates live during training from the ingest host
   - [ ] terminate the pod mid-run → run stays browsable, shows `worker_lost` within ~90s
@@ -259,6 +284,16 @@ Goal: move past the hardcoded `add(a,b)` seed.
 
 ---
 
+## Ideas surfaced (not scheduled)
+
+- **Sandbox cost + resource usage per rollout from Daytona's own analytics API**
+  (`daytona_analytics_api_client`: per-sandbox telemetry metrics/logs/traces and
+  usage). Every span already carries `sandbox_id`, so the rollout view could add
+  sandbox CPU/mem and $ — "GPU $ idle + sandbox $ per rollout".
+- **Daytona GPU sandboxes** exist in the SDK (`Resources(gpu=…, gpu_type=…)`,
+  `spot`) — relevant to `PRODUCT_DECISIONS.md` §5 (Daytona GPUs as an optional
+  backend under the same `compute` abstraction), after Phase 3.
+
 ## Deferred (explicitly not this phase)
 
 - Harbor backend (stub stays; revisit after Phases 1–3 since it reuses their analytics + ingest)
@@ -294,4 +329,5 @@ Phase 4 after Phase 3.3 (task data must reach the worker)
 | 2026-09-25 | `75091bf` | Progress lifecycle for on-box launches; dash opens before training |
 | 2026-09-25 | `b310806` | Three-way run bottleneck (environment / inference / trainer) |
 | 2026-09-25 | `49e2870` | Offline banner instead of raw Cloudflare 530 HTML |
-| 2026-09-25 | see `git log -- daytona_gym/ingest` | Phase 2: `dg ingest`, worker shipper, `worker_lost`, auth + hardening |
+| 2026-09-25 | `7fe0854` | Phase 2: `dg ingest`, worker shipper, `worker_lost`, auth + hardening |
+| 2026-09-25 | `2e480a1`+ | `dg ingest deploy --daytona`; wheel build fix; live sandbox probe |

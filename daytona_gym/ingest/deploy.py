@@ -47,10 +47,14 @@ def _log(msg: str) -> None:
 async def find_sandbox(daytona, name: str):
     from daytona import ListSandboxesQuery
 
-    async for sandbox in daytona.list(ListSandboxesQuery(labels={LABEL_KEY: LABEL_VALUE})):
-        if getattr(sandbox, "name", None) == name:
-            return sandbox
-    return None
+    # Consume the whole listing: returning mid-``async for`` closes the SDK's
+    # generator in another context and its OpenTelemetry hook raises.
+    matches = [
+        sandbox
+        async for sandbox in daytona.list(ListSandboxesQuery(labels={LABEL_KEY: LABEL_VALUE}))
+        if getattr(sandbox, "name", None) == name
+    ]
+    return matches[0] if matches else None
 
 
 async def create_sandbox(daytona, name: str, token: str):
