@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 from daytona_gym.telemetry.run_meta import read_run_meta
+from daytona_gym.telemetry.slime_perf import read_slime_perf
 from daytona_gym.telemetry.store import (
     InMemoryTelemetryStore,
     MetricSample,
@@ -60,12 +61,21 @@ DEFINITIONS: dict[str, str] = {
         "Per step, rollout phase only: 'environment' when environment wait is "
         "at least half of the rollout phase, otherwise 'inference'."
     ),
+    "slime_step": (
+        "Slime-reported per step (parsed from its perf/* log line): step_time; "
+        "train = step_time × (1 − wait_time_ratio); wait = the rest."
+    ),
+    "overhead_seconds": (
+        "Slime wait minus the Daytona-observed rollout phase: time the trainer "
+        "waited on something other than rollouts — engine offload/onload, weight "
+        "sync, scheduling. Estimate (two clocks, clamped at 0)."
+    ),
     "bottleneck": (
-        "Run-level: the largest of three buckets summed over steps — "
-        "environment (GPU idle waiting on envs), inference (time with at least "
-        "one generation in flight), trainer (derived train phase: train + "
-        "offload/onload + weight sync). Share = bucket / sum of the three. The "
-        "last step's train phase is unknown and not counted."
+        "Run-level: the largest bucket summed over steps — environment (GPU idle "
+        "waiting on envs), inference (at least one generation in flight), and "
+        "either trainer + overhead from Slime's own perf numbers when available, "
+        "or trainer = derived train phase (train + offload/onload + weight sync; "
+        "last step unknown) when not. Share = bucket / sum of buckets."
     ),
     "failed_waste_seconds": (
         "Inference + sandbox + tool seconds spent on rollouts that ended "
@@ -344,6 +354,24 @@ def analyze_run(
             }
         )
 
+    slime = read_slime_perf(metrics)
+    for s in steps:
+        perf = slime.get(s["step"])
+        if not perf or "perf/step_time" not in perf:
+            s["slime"] = None
+            continue
+        step_time = perf["perf/step_time"]
+        ratio = min(1.0, max(0.0, perf.get("perf/wait_time_ratio", 0.0)))
+        wait = step_time * ratio
+        s["slime"] = {
+            "step_time": step_time,
+            "wait_time_ratio": ratio,
+            "train_seconds": step_time - wait,
+            "wait_seconds": wait,
+            "overhead_seconds": max(0.0, wait - s["rollout_phase_seconds"]),
+            "perf": perf,
+        }
+
     provision = [
         float(s.duration_seconds or 0.0) for s in spans if s.name == "sandbox.provision"
     ]
@@ -363,11 +391,24 @@ def analyze_run(
     phase_total = sum(s["rollout_phase_seconds"] for s in steps)
     train_total = sum(s["train_phase_seconds"] or 0.0 for s in steps)
     inference_total = sum(s["inference_busy_seconds"] for s in steps)
-    breakdown = {
-        "environment": env_wait_total,
-        "inference": inference_total,
-        "trainer": train_total,
-    }
+    slime_steps = [s for s in steps if s.get("slime")]
+    if slime_steps:
+        # Trainer-reported: split the old "trainer" gap into real training
+        # time and wait overhead (engine swaps / weight sync).
+        breakdown = {
+            "environment": sum(s["env_wait_seconds"] for s in slime_steps),
+            "inference": sum(s["inference_busy_seconds"] for s in slime_steps),
+            "trainer": sum(s["slime"]["train_seconds"] for s in slime_steps),
+            "overhead": sum(s["slime"]["overhead_seconds"] for s in slime_steps),
+        }
+        trainer_source = "slime"
+    else:
+        breakdown = {
+            "environment": env_wait_total,
+            "inference": inference_total,
+            "trainer": train_total,
+        }
+        trainer_source = "derived"
     breakdown_sum = sum(breakdown.values())
     bottleneck = max(breakdown, key=breakdown.__getitem__) if breakdown_sum > 0 else "unknown"
 
@@ -388,6 +429,8 @@ def analyze_run(
             else ("inference" if phase_total > 0 else "unknown")
         ),
         "bottleneck": bottleneck,
+        "trainer_source": trainer_source,
+        "slime_step_time_seconds": sum(s["slime"]["step_time"] for s in slime_steps),
         "bottleneck_share": (
             breakdown[bottleneck] / breakdown_sum if breakdown_sum > 0 else 0.0
         ),

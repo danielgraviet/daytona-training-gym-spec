@@ -285,3 +285,25 @@ def test_open_prefers_ingest_url_without_local_server(tmp_path, monkeypatch) -> 
     url, handle = _start_laptop_dash_for_run(run_id="r1", host="h", remote_repo="/r", identity=None)
     assert url == "https://gym.example.com/run/r1" and handle is None
     assert {"DAYTONA_GYM_INGEST_URL", "DAYTONA_GYM_INGEST_TOKEN"} <= set(_FORWARD_ENV_KEYS)
+
+
+def test_rm_deletes_a_run_with_auth_only(ingest, tmp_path, monkeypatch) -> None:
+    from daytona_gym.ingest.server import rm_main
+
+    url, data = ingest
+    path, runs = _worker_files(tmp_path)
+    path.write_text(_span(0) + "\n")
+    write_progress(runs, "run_ship", phase="live", message="x", status="running")
+    _drain(_shipper(url, path))
+    assert (data / "run_ship.jsonl").exists()
+
+    req = urllib.request.Request(f"{url}/v1/runs/run_ship", method="DELETE")
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(req, timeout=5)  # noqa: S310
+    assert caught.value.code == 401
+
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_URL", url)
+    monkeypatch.setenv("DAYTONA_GYM_INGEST_TOKEN", TOKEN)
+    assert rm_main(["run_ship", "--yes"]) == 0
+    assert not any(data.glob("run_ship*"))
+    assert rm_main(["run_ship", "--yes"]) == 1  # already gone → 404

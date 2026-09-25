@@ -12,6 +12,7 @@ Write API (Bearer token):
     POST /v1/runs/<id>/telemetry   X-DG-Offset / X-DG-Next / X-DG-Generation
     PUT  /v1/runs/<id>/progress
     POST /v1/runs/<id>/heartbeat
+    DELETE /v1/runs/<id>            (``dg ingest rm``)
 
 Reads (dashboard + ``/api/*``) need the same token: ``Authorization: Bearer``
 for tools, or a cookie set by ``/login`` for browsers. Telemetry contains
@@ -108,6 +109,17 @@ class IngestStore:
         with self._lock(run_id):
             _atomic_write(self.root / f"{run_id}.progress.json", body)
             self.touch(run_id, locked=True)
+
+    def delete(self, run_id: str) -> bool:
+        """Remove a run's files. Returns False when nothing existed."""
+        with self._lock(run_id):
+            removed = False
+            for suffix in (".jsonl", ".progress.json", ".ingest.json"):
+                path = self.root / f"{run_id}{suffix}"
+                if path.is_file():
+                    path.unlink()
+                    removed = True
+            return removed
 
     def touch(self, run_id: str, *, locked: bool = False) -> None:
         def _do() -> None:
@@ -241,6 +253,22 @@ def make_handler(store: IngestStore, *, token: str | None):
         def do_PUT(self) -> None:  # noqa: N802
             self._ingest("PUT", urlparse(self.path).path)
 
+        def do_DELETE(self) -> None:  # noqa: N802
+            parts = [unquote(p) for p in urlparse(self.path).path.split("/") if p]
+            if len(parts) != 3 or parts[:2] != ["v1", "runs"]:
+                self._json(404, {"error": "not found"})
+                return
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return
+            if not valid_run_id(parts[2]):
+                self._json(400, {"error": "invalid run id"})
+                return
+            if store.delete(parts[2]):
+                self._json(200, {"deleted": parts[2]})
+            else:
+                self._json(404, {"error": "run not found"})
+
         def _login_submit(self) -> None:
             body = self._read_body()
             if body is None:
@@ -317,6 +345,40 @@ def make_handler(store: IngestStore, *, token: str | None):
 def serve(data_dir: Path, *, host: str, port: int, token: str | None) -> ThreadingHTTPServer:
     store = IngestStore(data_dir)
     return ThreadingHTTPServer((host, port), make_handler(store, token=token))
+
+
+def rm_main(argv: list[str]) -> int:
+    """``dg ingest rm <run>…`` — delete runs from the configured ingest host."""
+    import urllib.error
+    import urllib.request
+
+    from daytona_gym.ingest.config import IngestConfig
+
+    parser = argparse.ArgumentParser(prog="dg ingest rm", description="Delete runs from the ingest host.")
+    parser.add_argument("runs", nargs="+", help="Run ids to delete")
+    parser.add_argument("--yes", "-y", action="store_true", help="Do not ask for confirmation")
+    args = parser.parse_args(argv)
+    cfg = IngestConfig.from_env()
+    if cfg is None:
+        print("set DAYTONA_GYM_INGEST_URL and DAYTONA_GYM_INGEST_TOKEN (or put them in .env)", file=sys.stderr)
+        return 2
+    if not args.yes:
+        answer = input(f"Permanently delete {', '.join(args.runs)} from {cfg.url}? [y/N] ")
+        if answer.strip().lower() not in {"y", "yes"}:
+            print("aborted")
+            return 1
+    rc = 0
+    for run in args.runs:
+        req = urllib.request.Request(
+            f"{cfg.url}/v1/runs/{quote(run, safe='')}", method="DELETE", headers=cfg.auth_headers()
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                print(f"deleted {run}" if resp.status == 200 else f"{run}: HTTP {resp.status}")
+        except urllib.error.HTTPError as exc:
+            print(f"{run}: HTTP {exc.code} {exc.read().decode(errors='replace')[:200]}", file=sys.stderr)
+            rc = 1
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:

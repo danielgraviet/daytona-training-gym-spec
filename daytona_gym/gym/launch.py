@@ -217,11 +217,15 @@ def execute_plan(
         )
         gpu_sampler.start()
     try:
+        from daytona_gym.telemetry.slime_perf import SlimePerfRecorder
+
+        perf = SlimePerfRecorder(plan.telemetry_path, run_id=plan.run_id)
         returncode = _run_slime_job(
             submit,
             cwd=plan.slime_root,
             env=env,
             on_phase=on_phase,
+            on_line=perf.feed,
         )
     finally:
         if gpu_sampler is not None:
@@ -298,6 +302,7 @@ def _run_slime_job(
     cwd: Path,
     env: dict[str, str],
     on_phase: OnPhase | None = None,
+    on_line: Callable[[str], None] | None = None,
 ) -> int:
     """Run ``ray job submit`` while streaming progress for the live dash.
 
@@ -351,6 +356,8 @@ def _run_slime_job(
         for raw in proc.stdout:
             line = raw.rstrip("\n")
             print(raw, end="", flush=True)
+            if on_line is not None:
+                on_line(line)
             if line.strip():
                 log_lines.append(line[:500])
                 hint = _boot_hint_from_logs(log_lines)

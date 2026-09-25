@@ -13,7 +13,7 @@ how it was verified). ⏳ marks work that is partly done.
 | Phase | State | One-line summary |
 | --- | --- | --- |
 | 0 Hygiene | ✅ done | Tests green, secrets off command lines, docs point here |
-| 1 Flagship analytics | ✅ done (1.2 partial) | Per-step "where time went" + $ — verified live on A100 |
+| 1 Flagship analytics | ✅ done (1.2 live check pending) | Per-step "where time went" + $ — verified live on A100 |
 | 2 Durable telemetry | ✅ done, verified live | `dg ingest` on a Daytona sandbox; A100 run shipped live; pod stop → `worker_lost` (2.3 OTLP deferred) |
 | 3 BYO portability | not started | Worker image, outbound agent, second provider |
 | 4 Real task packs | not started | Dataset-driven seeds, reward callable, repo-scale pack |
@@ -21,8 +21,7 @@ how it was verified). ⏳ marks work that is partly done.
 
 ### Next up
 
-1. Finish **1.2** (Slime `perf/*` ingest) — the log format is known from the
-   live run, so this is a small parser, not a spike. Bundle `dg ingest rm`.
+1. Confirm **1.2** on the next A100 run (`git pull` on the pod first).
 2. Start **Phase 3** — needs two decisions: second provider, and where the
    worker image is published.
 
@@ -84,14 +83,19 @@ waiting on environments, which rollouts caused it, and what that cost.
     `sandbox.seed` counts as sandbox time. Analysis groups by
     `(rollout_id, step)` in case a trainer reuses sample indices.
     `tests/contracts/test_correlation_ids.py`.
-- [ ] ⏳ **1.2 Trainer-side timing ingest.** Done when the dashboard shows a
-  per-step bar `rollout | train | weight_sync | other` from trainer-reported numbers.
-  - Shipped so far: train phase is *derived* from the gap between steps.
-  - Remaining: parse Slime's `perf/*` dict lines from the Ray job output that
-    `execute_plan` already streams (seen live: `perf/step_time`,
-    `perf/wait_time_ratio`, `perf/actor_train_tflops`, …), emit them as
-    `train.*` metrics keyed by step, and show "Slime-reported" next to derived
-    values. Step index = order of appearance unless the line carries one.
+- [x] **1.2 Trainer-side timing ingest.** Done when the step view splits
+  trainer time using trainer-reported numbers (⏳ live A100 confirmation pending).
+  - Note: `telemetry/slime_perf.py` parses Slime's per-step `perf/*` dict from
+    the Ray job output the launcher already streams (`ast.literal_eval`, never
+    eval; step from the line or order of appearance; duplicate lines deduped)
+    and appends `slime.perf.*` gauges to the run JSONL. Per step:
+    train = `step_time × (1 − wait_time_ratio)`, overhead = Slime wait − the
+    Daytona-observed rollout phase (engine offload/onload, weight sync). The
+    run bottleneck becomes environment / inference / trainer / **overhead**
+    when Slime numbers exist, else falls back to the derived gap. On a run
+    shaped like `run_b959…` this reads **overhead ≈ 88%, trainer ≈ 4%** — the
+    "trainer-bound" verdict was really engine-swap/sync-bound.
+    `tests/contracts/test_slime_perf.py`.
 - [x] **1.3 Time-aligned GPU view.** Done when GPU util and rollout spans share a wall-clock axis.
   - Note: `WhereTimeWent.svelte` timeline — rollouts, inference segments,
     GPU-idle windows, GPU util on one axis; GPU sampler every 5s.
@@ -226,7 +230,7 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
   - [ ] Periodic backup tarball of the data dir to a Daytona Volume (volumes are
     object-storage backed — backup target only, not the live store).
   - [x] Pin to a commit instead of `@main` (`--ref`, resolved via `git ls-remote`).
-  - [ ] Delete runs from the ingest host (`dg ingest rm <run>`), e.g. the two leaked test runs.
+  - [x] `dg ingest rm <run>…` (token-guarded `DELETE /v1/runs/<id>`); used to remove the two leaked test runs.
 - [x] **Phase 2 exit — verified live on RunPod.** Done when (laptop detach item optional):
   - [x] `dg ingest deploy --daytona` (HTTPS preview URL + token), env exported on laptop and pod
   - [x] `python main.py` on the A100 prints the ingest URL (not trycloudflare / 127.0.0.1)
@@ -341,3 +345,4 @@ Phase 4 after Phase 3.3 (task data must reach the worker)
 | 2026-09-25 | `49e2870` | Offline banner instead of raw Cloudflare 530 HTML |
 | 2026-09-25 | `7fe0854` | Phase 2: `dg ingest`, worker shipper, `worker_lost`, auth + hardening |
 | 2026-09-25 | `2e480a1`+ | `dg ingest deploy --daytona`; wheel build fix; live sandbox probe |
+| 2026-09-25 | (1.2) | Slime `perf/*` ingest → trainer vs overhead split; `dg ingest rm` |

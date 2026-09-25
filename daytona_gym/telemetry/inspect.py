@@ -238,8 +238,9 @@ def _print_analysis(
         f"bottleneck={totals['bottleneck']} {totals['bottleneck_share']:.0%})"
     )
     parts = totals["time_breakdown"]
+    source = "Slime perf" if totals.get("trainer_source") == "slime" else "derived gap"
     print(
-        "  step time split           "
+        f"  step time split ({source}) ".ljust(28)
         + "  ".join(
             f"{name} {_fmt_secs(v['seconds'])} ({v['share']:.0%})" for name, v in parts.items()
         )
@@ -276,14 +277,23 @@ def _print_analysis(
         print("  gpu cost                  (pass --gpu-cost-per-hour or set "
               "TrainConfig(gpu_cost_per_hour=...))")
     if len(out["steps"]) > 1:
+        has_slime = any(s.get("slime") for s in out["steps"])
         print()
-        print("  step  rollouts  phase     env-wait  straggler  rollout-bound")
+        head = "  step  rollouts  phase     env-wait  straggler  rollout-bound"
+        print(head + ("    slime-step  train     overhead" if has_slime else ""))
         for s in out["steps"][-10:]:
-            print(
+            row = (
                 f"  {s['step']:>4}  {s['n_rollouts']:>8}  {_fmt_secs(s['rollout_phase_seconds']):>8}"
                 f"  {_fmt_secs(s['env_wait_seconds']):>8}  {_fmt_secs(s['straggler_tax_seconds']):>9}"
-                f"  {s['bound']}"
+                f"  {s['bound']:<13}"
             )
+            sl = s.get("slime")
+            if sl:
+                row += (
+                    f"  {_fmt_secs(sl['step_time']):>10}  {_fmt_secs(sl['train_seconds']):>8}"
+                    f"  {_fmt_secs(sl['overhead_seconds']):>8}"
+                )
+            print(row.rstrip())
 
 
 def _fmt_usd(value: float) -> str:

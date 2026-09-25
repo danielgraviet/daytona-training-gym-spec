@@ -77,7 +77,13 @@
   function pct(v) {
     return `${Math.round((v || 0) * 100)}%`;
   }
-  const splitColors = { environment: 'var(--bad)', inference: 'var(--accent)', trainer: 'var(--ok)' };
+  const splitColors = {
+    environment: 'var(--bad)',
+    inference: 'var(--accent)',
+    trainer: 'var(--ok)',
+    overhead: 'var(--warn)',
+  };
+  let hasSlime = $derived(steps.some((s) => s.slime));
   let split = $derived(
     Object.entries(totals.time_breakdown || {})
       .filter(([, v]) => v.seconds > 0)
@@ -135,6 +141,9 @@
           </div>
           <p class="muted m-0 mt-1 text-xs">
             {#each split as part, i}{i ? ' · ' : ''}{part.name} {pct(part.share)}{/each}
+          </p>
+          <p class="muted m-0 text-xs" title={totals.trainer_source === 'slime' ? defs.slime_step : defs.train_phase_seconds}>
+            trainer: {totals.trainer_source === 'slime' ? "Slime's perf numbers" : 'derived from step gaps'}
           </p>
         {/if}
         {#if totals.n_failed}
@@ -224,7 +233,13 @@
               <th class="px-3 py-2 font-medium">rollout phase</th>
               <th class="px-3 py-2 font-medium" title={defs.env_wait_seconds}>GPU idle on envs</th>
               <th class="px-3 py-2 font-medium" title={defs.straggler_tax_seconds}>straggler</th>
-              <th class="px-3 py-2 font-medium" title={defs.train_phase_seconds}>train (derived)</th>
+              {#if hasSlime}
+                <th class="px-3 py-2 font-medium" title={defs.slime_step}>Slime step</th>
+                <th class="px-3 py-2 font-medium" title={defs.slime_step}>train</th>
+                <th class="px-3 py-2 font-medium" title={defs.overhead_seconds}>overhead</th>
+              {:else}
+                <th class="px-3 py-2 font-medium" title={defs.train_phase_seconds}>train (derived)</th>
+              {/if}
               <th class="px-3 py-2 font-medium">slowest rollout</th>
               <th class="px-3 py-2 font-medium" title={defs.bound}>rollout bound</th>
             </tr>
@@ -237,7 +252,13 @@
                 <td class="px-3 py-2">{fmtSecs(s.rollout_phase_seconds)}</td>
                 <td class="px-3 py-2">{fmtSecs(s.env_wait_seconds)} <span class="muted">({pct(s.env_wait_fraction)})</span></td>
                 <td class="px-3 py-2">{fmtSecs(s.straggler_tax_seconds)}</td>
-                <td class="px-3 py-2">{fmtSecs(s.train_phase_seconds)}</td>
+                {#if hasSlime}
+                  <td class="px-3 py-2">{fmtSecs(s.slime?.step_time)}</td>
+                  <td class="px-3 py-2">{fmtSecs(s.slime?.train_seconds)}</td>
+                  <td class="px-3 py-2">{fmtSecs(s.slime?.overhead_seconds)}</td>
+                {:else}
+                  <td class="px-3 py-2">{fmtSecs(s.train_phase_seconds)}</td>
+                {/if}
                 <td class="px-3 py-2">
                   <button
                     class="cursor-pointer border-0 bg-transparent p-0 text-[var(--accent)]"
