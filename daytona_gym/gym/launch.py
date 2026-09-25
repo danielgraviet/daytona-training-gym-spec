@@ -187,6 +187,7 @@ def execute_plan(
         working_dir=plan.slime_root,
     )
 
+    warn_if_low_host_ram()
     _reset_ray(num_gpus=1, on_phase=on_phase)
     env = os.environ.copy()
     env.update(plan.host_env)
@@ -264,17 +265,21 @@ def _reset_ray(*, num_gpus: int, on_phase: OnPhase | None = None) -> None:
         f"Starting Ray head ({num_gpus} GPU)…",
         detail="ray start --head --num-gpus …",
     )
+    ray_args = [
+        "ray",
+        "start",
+        "--head",
+        "--node-ip-address",
+        "127.0.0.1",
+        "--num-gpus",
+        str(num_gpus),
+        "--disable-usage-stats",
+    ]
+    store = ray_object_store_bytes()
+    if store is not None:
+        ray_args += ["--object-store-memory", str(store)]
     start = subprocess.run(
-        [
-            "ray",
-            "start",
-            "--head",
-            "--node-ip-address",
-            "127.0.0.1",
-            "--num-gpus",
-            str(num_gpus),
-            "--disable-usage-stats",
-        ],
+        ray_args,
         check=False,
         capture_output=True,
     )
@@ -412,3 +417,49 @@ def require_daytona_api_key() -> None:
             f"DAYTONA_API_KEY {state} on this machine. `export DAYTONA_API_KEY=...`, "
             "add it to the repo .env, or fill it in the --env-file, then relaunch.",
         )
+
+
+SMALL_HOST_RAM_BYTES = 32 * 1024**3
+SMALL_HOST_OBJECT_STORE_BYTES = 2 * 1024**3
+
+
+def host_ram_bytes() -> int | None:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def ray_object_store_bytes() -> int | None:
+    """Cap Ray's shared-memory object store on small-RAM boxes.
+
+    Ray reserves ~30% of RAM by default. On a 15 GB home box (RTX 3090, live
+    2026-09-25) that was 5.2 GB of /dev/shm on top of Slime's colocated CPU
+    offload, and the kernel OOM-killed the Megatron actor. The store only holds
+    rollout data here, so 2 GB is plenty. ``DAYTONA_GYM_RAY_OBJECT_STORE_GB``
+    overrides; ``0`` keeps Ray's default.
+    """
+    raw = os.environ.get("DAYTONA_GYM_RAY_OBJECT_STORE_GB")
+    if raw is not None and raw.strip():
+        gb = float(raw)
+        return None if gb <= 0 else int(gb * 1024**3)
+    ram = host_ram_bytes()
+    if ram is not None and ram < SMALL_HOST_RAM_BYTES:
+        return SMALL_HOST_OBJECT_STORE_BYTES
+    return None
+
+
+def warn_if_low_host_ram(num_gpus: int = 1) -> None:
+    """Colocated Slime keeps weights + optimizer state in (pinned) CPU RAM."""
+    ram = host_ram_bytes()
+    if ram is None or ram >= SMALL_HOST_RAM_BYTES:
+        return
+    print(
+        f"host RAM: WARNING — this machine has {ram / 1024**3:.0f} GiB. Colocated Slime moves "
+        "model weights and optimizer state into CPU RAM between steps; below ~32 GiB the "
+        "kernel may OOM-kill the trainer. Ray's object store is capped at "
+        f"{(ray_object_store_bytes() or 0) / 1024**3:.0f} GiB; use the smallest model, "
+        "and add swap for headroom.",
+        flush=True,
+    )
+

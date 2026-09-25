@@ -46,3 +46,29 @@ def test_dockerignore_keeps_secrets_out_of_the_image() -> None:
 def test_dockerfile_pins_base_by_digest() -> None:
     text = (REPO / "docker" / "worker" / "Dockerfile").read_text()
     assert "slimerl/slime@sha256:" in text
+
+
+def test_ray_object_store_is_capped_on_small_hosts(monkeypatch) -> None:
+    from daytona_gym.gym import launch
+
+    monkeypatch.delenv("DAYTONA_GYM_RAY_OBJECT_STORE_GB", raising=False)
+    monkeypatch.setattr(launch, "host_ram_bytes", lambda: 15 * 1024**3)  # the home 3090
+    assert launch.ray_object_store_bytes() == 2 * 1024**3
+    monkeypatch.setattr(launch, "host_ram_bytes", lambda: 256 * 1024**3)  # A100 pod
+    assert launch.ray_object_store_bytes() is None  # Ray's default
+    monkeypatch.setenv("DAYTONA_GYM_RAY_OBJECT_STORE_GB", "3")
+    assert launch.ray_object_store_bytes() == 3 * 1024**3
+    monkeypatch.setenv("DAYTONA_GYM_RAY_OBJECT_STORE_GB", "0")
+    assert launch.ray_object_store_bytes() is None
+
+
+def test_low_ram_warning(monkeypatch, capsys) -> None:
+    from daytona_gym.gym import launch
+
+    monkeypatch.delenv("DAYTONA_GYM_RAY_OBJECT_STORE_GB", raising=False)
+    monkeypatch.setattr(launch, "host_ram_bytes", lambda: 15 * 1024**3)
+    launch.warn_if_low_host_ram()
+    assert "15 GiB" in capsys.readouterr().out
+    monkeypatch.setattr(launch, "host_ram_bytes", lambda: 64 * 1024**3)
+    launch.warn_if_low_host_ram()
+    assert capsys.readouterr().out == ""

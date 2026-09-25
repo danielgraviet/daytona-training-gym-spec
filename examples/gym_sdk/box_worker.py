@@ -46,3 +46,4 @@ if __name__ == "__main__":
     run = config.launch(open=True)
     print(run.training_run_id)
     print(run.dashboard_url or run.inspect_hint)
+    raise SystemExit(int(run.returncode or 0))  # a failed run must not look like success
