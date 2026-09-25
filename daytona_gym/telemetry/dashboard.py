@@ -1343,7 +1343,9 @@ def main(argv: list[str] | None = None) -> int:
     remote = resolve_remote_target(args.remote)
     remote_identity = args.identity
     remote_root = args.remote_root
-    if remote is None and not args.local_only:
+    # On the pod itself runs/ is already local — auto-pull would SSH into ourselves.
+    on_gpu_box = detect_serve_context().kind == "runpod"
+    if remote is None and not args.local_only and not on_gpu_box:
         auto = resolve_auto_remote()
         if auto is not None:
             remote, auto_ident, auto_root = auto
@@ -1409,7 +1411,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.share:
         share = True
     else:
-        share = None  # default: loopback (Cloudflare only with --share)
+        # Loopback is unreachable from the user's browser on a GPU box, so
+        # tunnel there by default (same rule as TrainingRun.open()).
+        share = context.kind in {"runpod", "ssh"}
 
     if spa_available():
         print(f"SPA dashboard  {_STATIC_DIR}", flush=True)

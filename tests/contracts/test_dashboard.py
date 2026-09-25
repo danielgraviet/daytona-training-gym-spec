@@ -332,3 +332,31 @@ def test_sync_runs_via_scp(tmp_path: Path, monkeypatch) -> None:
         identity=Path("/tmp/fake_key"),
     )
     assert (local_runs / "a.jsonl").read_text() == '{"ok":1}\n'
+
+
+def test_dash_on_pod_serves_local_runs_and_tunnels(tmp_path, monkeypatch) -> None:
+    """Regression: `dg dash --share` on the pod tried to SSH-pull from itself."""
+    from daytona_gym.telemetry import dashboard as dash_mod
+    from daytona_gym.telemetry.dashboard import ServeContext
+
+    served: dict = {}
+    monkeypatch.setattr(dash_mod, "detect_serve_context", lambda: ServeContext("runpod", "pod1"))
+
+    def _no_auto_remote():
+        raise AssertionError("must not auto-pull runs/ when already on the pod")
+
+    monkeypatch.setattr(dash_mod, "resolve_auto_remote", _no_auto_remote)
+    monkeypatch.setattr(dash_mod, "serve", lambda **kw: served.update(kw))
+
+    assert dash_mod.main(["--runs-dir", str(tmp_path), "--no-open"]) == 0
+    assert served["share"] is True
+    assert served["runs_dir"] == tmp_path
+
+
+def test_slice_marked_block_error_is_readable() -> None:
+    import pytest
+
+    from daytona_gym.telemetry.dashboard_sync import _slice_marked_block
+
+    with pytest.raises(RuntimeError, match="missing begin marker"):
+        _slice_marked_block("short", "__B__", "__E__")

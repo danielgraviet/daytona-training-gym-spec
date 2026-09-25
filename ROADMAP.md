@@ -11,12 +11,12 @@ Supersedes the "Next" section of `TODO.md` and the "Milestone 0 only" guidance i
 | 0.2 key hygiene | ⚠️ partly done | Key removed from `scratch.txt`; **rotation is still a manual step** (Daytona console) |
 | 0.3 secrets off command lines | ✅ done | Payload carries key *names* only; env file 0600, sourced then deleted; PTY echo disabled while typing; `test_secret_forwarding.py` |
 | 0.4 docs | ✅ done | `AGENTS.md`, `TODO.md`, `COMPETITIVE_MODAL_GYM.md` point here |
-| 1.1 correlation ids | ✅ done (needs live check) | `worker_id`, `training_step`, `rollout_batch_id` on every span; `sandbox_id` on provision; step is *derived* (`telemetry/batches.py`) unless trainer passes one |
+| 1.1 correlation ids | ✅ done | `worker_id`, `training_step`, `rollout_batch_id` on every span; `sandbox_id` on provision; step is *derived* (`telemetry/batches.py`) unless trainer passes one |
 | 1.2 trainer-side timing | ⏳ partial | Train phase derived from rollout gaps. Slime timer ingest still needs a spike against a real Slime install |
 | 1.3 time-aligned GPU view | ✅ done | Timeline: rollouts + inference + GPU-idle windows + GPU util on one axis; GPU chart on wall-clock |
 | 1.4 derived metrics | ✅ done | `telemetry/analysis.py`: env wait, straggler tax, bound, failed waste, provision/tool percentiles, definitions |
 | 1.5 dollars | ✅ done | `TrainConfig(gpu_cost_per_hour=...)` → `run.meta` in telemetry; `dg stats --gpu-cost-per-hour` override |
-| Phase 1 exit | ⏳ pending | Verify on a live multi-step BYO run (derived step ids + GPU sampler at 5s) |
+| Phase 1 exit | ✅ verified live | A100, `slimerl/slime`, run `run_b17b5158…` (2026-09-25): 4 steps × 8 rollouts detected correctly (derived ids); 32/32 reward 1.0; env wait 46% of rollout phase; derived train phase 98s ≫ rollout phases ~20s → this config is trainer-bound, not env-bound |
 | Phases 2–5 | not started | |
 
 ## Why this phase

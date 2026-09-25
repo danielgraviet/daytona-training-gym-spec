@@ -27,10 +27,10 @@ def _slice_marked_block(text: str, begin: str, end: str) -> str:
     end_re = re.compile(rf"(?:^|\n){re.escape(end)}(?:\n|$)")
     m_begin = begin_re.search(text)
     if m_begin is None:
-        raise RuntimeError(f"missing begin marker {begin!r}: {text[-240]!r}")
+        raise RuntimeError(f"missing begin marker {begin!r}: {text[-240:]!r}")
     m_end = end_re.search(text, m_begin.end())
     if m_end is None:
-        raise RuntimeError(f"missing end marker {end!r}: {text[-240]!r}")
+        raise RuntimeError(f"missing end marker {end!r}: {text[-240:]!r}")
     return text[m_begin.end() : m_end.start()]
 
 

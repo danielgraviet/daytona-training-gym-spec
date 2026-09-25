@@ -262,8 +262,8 @@ def _print_analysis(
     cost = out["cost"]
     if cost:
         print(
-            f"  gpu cost                  ${cost['run_cost']:.2f} over rollout window, "
-            f"${cost['idle_gpu_cost']:.2f} idle on envs ({cost['idle_fraction']:.0%} of spend)"
+            f"  gpu cost                  {_fmt_usd(cost['run_cost'])} over rollout window, "
+            f"{_fmt_usd(cost['idle_gpu_cost'])} idle on envs ({cost['idle_fraction']:.0%} of spend)"
         )
     else:
         print("  gpu cost                  (pass --gpu-cost-per-hour or set "
@@ -277,6 +277,10 @@ def _print_analysis(
                 f"  {_fmt_secs(s['env_wait_seconds']):>8}  {_fmt_secs(s['straggler_tax_seconds']):>9}"
                 f"  {s['bound']}"
             )
+
+
+def _fmt_usd(value: float) -> str:
+    return f"${value:.4f}" if value < 1 else f"${value:.2f}"
 
 
 def _reward_sort_key(item: tuple[object, int]) -> tuple[int, float, str]:

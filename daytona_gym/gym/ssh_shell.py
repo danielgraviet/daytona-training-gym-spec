@@ -156,7 +156,7 @@ class PtyShell:
                     raise DaytonaError(
                         ErrorCode.PLATFORM_ERROR,
                         f"timed out waiting for {what}. "
-                        f"Last output: {self._buf[-400]!r}",
+                        f"Last output: {self._buf[-400:]!r}",
                     )
                 wait = min(0.5, remaining)
             self._read_some(wait)
