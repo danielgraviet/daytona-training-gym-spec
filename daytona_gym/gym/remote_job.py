@@ -137,6 +137,9 @@ def _run_supervised(payload: dict) -> int:
         from daytona_gym.ingest.shipper import start_shipper_from_env
 
         shipper = start_shipper_from_env(plan.telemetry_path, plan.run_id)
+        from daytona_gym.gym.launch import require_daytona_api_key
+
+        require_daytona_api_key()
 
         run = TrainingRun(
             run_id=plan.run_id,

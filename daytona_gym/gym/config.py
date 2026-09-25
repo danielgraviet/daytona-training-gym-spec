@@ -12,7 +12,12 @@ from daytona_gym.gym.dataset import (
     materialize_dataset,
 )
 from daytona_gym.gym.harbor import HarborBackend, HarborRecipe, resolve_backend
-from daytona_gym.gym.launch import build_plan, execute_plan, plan_to_training_run
+from daytona_gym.gym.launch import (
+    build_plan,
+    execute_plan,
+    plan_to_training_run,
+    require_daytona_api_key,
+)
 from daytona_gym.gym.models import SoftSlimeModel
 from daytona_gym.gym.recipe import CodingRecipe
 from daytona_gym.gym.run import TrainingRun
@@ -229,6 +234,7 @@ class TrainConfig:
                 started_at=started_at,
             )
             shipper = start_shipper_from_env(plan.telemetry_path, plan.run_id)
+            require_daytona_api_key()
 
             if self.model is not None:
                 from daytona_gym.gym.model_prep import ensure_model_ready

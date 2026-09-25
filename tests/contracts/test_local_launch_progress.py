@@ -88,3 +88,21 @@ def test_old_runs_without_progress_go_stale(tmp_path: Path) -> None:
     os.utime(path, (old, old))
     assert dashboard_data.infer_status_without_progress(path, has_rollouts=True) == "stale"
     assert dashboard_data.infer_status_without_progress(path, has_rollouts=False) == "pending"
+
+
+def test_missing_api_key_fails_before_model_prep(cfg, monkeypatch) -> None:
+    """Regression: the key check ran after model download, just before Ray."""
+    c, _ = cfg
+    monkeypatch.delenv("DAYTONA_API_KEY", raising=False)
+    monkeypatch.delenv("DAYTONA_API_KEY_FILE", raising=False)
+    monkeypatch.setattr(
+        config_mod,
+        "execute_plan",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must fail before training")),
+    )
+    with pytest.raises(DaytonaError) as caught:
+        c.launch(open=False)
+    assert caught.value.code == ErrorCode.USER_CODE_ERROR
+    assert "DAYTONA_API_KEY" in caught.value.message
+    prog = read_progress(Path(c.telemetry_path).parent, "run_local")
+    assert prog["status"] == "failed" and "DAYTONA_API_KEY" in prog["message"]

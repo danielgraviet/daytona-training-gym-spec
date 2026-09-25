@@ -23,7 +23,13 @@ def test_dg_cli_loads_cwd_dotenv_without_overriding(tmp_path, monkeypatch) -> No
     even though it was in .env."""
     import os
 
+    from daytona_gym import envfile
     from daytona_gym.envfile import load_default_dotenvs
+
+    # Never read the developer's real repo .env inside tests (it leaks into
+    # os.environ for every later test).
+    monkeypatch.setattr(envfile, "_REPO_ENV", tmp_path / "no-repo.env")
+    monkeypatch.delenv("DAYTONA_GYM_NO_DOTENV", raising=False)
 
     (tmp_path / ".env").write_text(
         "export DAYTONA_API_KEY=from_cwd\nDG_TEST_ALREADY_SET=from_file\n"

@@ -26,3 +26,15 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool 
     if any("e2e" in str(arg) for arg in config.args):
         return False
     return True
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's .env / shell ingest config out of unit tests.
+
+    `dg` auto-loads ./.env and the repo .env; tests run from the repo root, so
+    without this a real DAYTONA_GYM_INGEST_URL/TOKEN changes launch behavior.
+    """
+    monkeypatch.setenv("DAYTONA_GYM_NO_DOTENV", "1")
+    monkeypatch.delenv("DAYTONA_GYM_INGEST_URL", raising=False)
+    monkeypatch.delenv("DAYTONA_GYM_INGEST_TOKEN", raising=False)

@@ -384,3 +384,19 @@ def _float_or_none(raw: str | None) -> float | None:
         return float(raw) if raw else None
     except ValueError:
         return None
+
+
+def require_daytona_api_key() -> None:
+    """Fail in seconds, not after a multi-minute model download / Megatron init."""
+    from daytona_gym.runtime.security import resolve_daytona_api_key
+
+    try:
+        key = resolve_daytona_api_key()
+    except OSError:
+        key = None
+    if not key:
+        raise DaytonaError(
+            ErrorCode.USER_CODE_ERROR,
+            "DAYTONA_API_KEY is not set on this machine. `export DAYTONA_API_KEY=...` "
+            "or add it to the repo .env (main.py / dg load it), then relaunch.",
+        )

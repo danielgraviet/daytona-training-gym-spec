@@ -32,20 +32,21 @@ def load_dotenv(path: Path | str | None = None) -> Path | None:
     return path
 
 
+_REPO_ENV = Path(__file__).resolve().parents[1] / ".env"
+
+
 def load_default_dotenvs() -> list[Path]:
     """Load ``./.env`` (where the user runs ``dg``) then the repo-root ``.env``.
 
     Existing environment variables always win; the first file wins over the
-    second for keys set in both.
+    second for keys set in both. Set ``DAYTONA_GYM_NO_DOTENV=1`` to skip.
     """
+    if os.environ.get("DAYTONA_GYM_NO_DOTENV") == "1":
+        return []
     loaded: list[Path] = []
     seen: set[Path] = set()
-    for candidate in (Path.cwd() / ".env", None):
-        resolved = (
-            candidate.resolve()
-            if candidate is not None
-            else Path(__file__).resolve().parents[1] / ".env"
-        )
+    for candidate in (Path.cwd() / ".env", _REPO_ENV):
+        resolved = candidate.resolve()
         if resolved in seen:
             continue
         seen.add(resolved)

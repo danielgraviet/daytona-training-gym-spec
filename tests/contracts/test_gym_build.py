@@ -84,7 +84,8 @@ def test_compute_escape_hatch_still_works(tmp_path: Path) -> None:
     )
 
 
-def test_validate_missing_paths_on_real_launch(tmp_path: Path) -> None:
+def test_validate_missing_paths_on_real_launch(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DAYTONA_API_KEY", "dtn_test")  # key check runs first
     cfg = _config_modal(tmp_path)
     with pytest.raises(DaytonaError) as caught:
         cfg.launch(dry_run=False)
