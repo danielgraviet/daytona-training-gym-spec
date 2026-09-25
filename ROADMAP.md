@@ -15,15 +15,16 @@ how it was verified). ⏳ marks work that is partly done.
 | 0 Hygiene | ✅ done | Tests green, secrets off command lines, docs point here |
 | 1 Flagship analytics | ✅ done (1.2 live check pending) | Per-step "where time went" + $ — verified live on A100 |
 | 2 Durable telemetry | ✅ done, verified live | `dg ingest` on a Daytona sandbox; A100 run shipped live; pod stop → `worker_lost` (2.3 OTLP deferred) |
-| 3 BYO portability | ⏳ in progress | 3.3 done; worker image, outbound agent, home 3090 next |
+| 3 BYO portability | ⏳ in progress | 3.3 done; 3.1 image published (GHCR + Docker Hub); 3.4 home 3090 trains all steps, fails after — resume Monday |
 | 4 Real task packs | not started | Dataset-driven seeds, reward callable, repo-scale pack |
 | 5 Analytics-only path | not started | Slime users anywhere get the dashboard via adapter + ingest token |
 
 ### Next up
 
-1. Confirm **1.2** on the next A100 run (`git pull` on the pod first).
-2. **Phase 3**: 3.3 done; next 3.1 worker image (decide: GHCR vs Docker Hub),
-   then 3.2 outbound agent, then 3.4 on the home 3090.
+1. ~~Confirm 1.2 on A100~~ — confirmed (`run_ecc7…`: Slime split live; 3090 runs too).
+2. **Monday: finish 3.4 on the home 3090** (checklist under 3.4) — all 4
+   steps already train; the failure is after training.
+3. Then **3.2 outbound agent**, and the ingest watchdog (sandbox was found stopped).
 
 ## Why this phase
 
@@ -223,6 +224,10 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
   - New pod, run `run_ecc7eb0c…`: ingest vars not in the launch shell → launch silently fell back to a Cloudflare tunnel and never shipped → every launch now prints `ingest: shipping …` or `ingest: OFF …`, half a config fails fast, and `dg ingest push runs/<id>.jsonl` backfills missed runs (idempotent).
   - Unit tests read the developer's `.env` and shipped two fake runs (`run_worker_test`, `run_testgym`) to the real ingest host → tests are hermetic (`DAYTONA_GYM_NO_DOTENV=1` fixture).
 - [ ] **Ingest sandbox follow-ups.**
+  - [ ] ⚠️ **Priority raised:** on 2026-09-25 the ingest sandbox was found
+    **STOPPED with auto-stop = 0** (cause unknown — platform/org limits?). Runs
+    kept their data on disk and a redeploy fixed it; launches now warn loudly
+    when the ingest host is unreachable. Needs a watchdog / auto-restart.
   - [ ] Auto-restart `dg ingest` after a sandbox restart — try an image
     `ENTRYPOINT` (verify it coexists with Daytona's toolbox daemon); fallback is
     a watchdog that re-runs deploy when `/healthz` fails.
@@ -261,8 +266,13 @@ Goal: "move off Modal's GPUs to anything" is demonstrated, not claimed.
     `SLIME_ROOT` / `MEGATRON_ROOT`; defaults keep the old `/root/…` layout.
     `.dockerignore` keeps `.env` / runs / `.git` out of the image (tested).
   - Base image facts: amd64, Python 3.12, **requires host driver with CUDA ≥ 12.9**.
-  - Remaining: CI build green; image public on GHCR; `examples/gym_sdk/box_worker.py`
-    trains on the home 3090 (0.5B) piped into the container, no git clone.
+  - [x] CI build green (~10–30 min; Docker storage on the runner's `/mnt`).
+  - [x] Published + public: `ghcr.io/danielgraviet/daytona-gym-worker` and
+    `docker.io/dtgraviet/daytona-gym-worker` (`:latest` + `:<sha>`). Docker Hub
+    push takes ~13 s (base layers mount from `slimerl/slime`); GHCR re-push ~9 s.
+  - [x] Pulled on the home 3090: after the one-time base pull, image updates
+    download only the gym layer (~5 s).
+  - [ ] ⏳ A full successful run on the 3090 — see 3.4.
 - [ ] **3.2 Outbound worker agent** (`daytona_gym/workers/agent.py`). Done when
   `docker run <image> daytona-gym worker --token …` dials out, receives a
   launch payload, reports lifecycle + GPU inventory, and supports safe stop —
@@ -280,8 +290,41 @@ Goal: "move off Modal's GPUs to anything" is demonstrated, not claimed.
     macOS `base64` rejects a file arg, and `base64 | python` hid the failure
     as an empty job file). `tests/contracts/test_dataset_shipping.py`.
   - ⏳ Live check: laptop → pod launch with a JSONL that is not in git.
-- [ ] **3.4 Dogfood on a second provider** — **chosen: the user's home RTX 3090**
-  (24 GB: expect the 0.5B preset; 3B colocated likely won't fit).
+- [ ] ⏳ **3.4 Dogfood on a second provider** — **the user's home RTX 3090**.
+  **Pick up here Monday.**
+  - Box: Ubuntu, RTX 3090 24 GB, driver 595 (CUDA 13.2), **16 GB host RAM**
+    (15 GiB usable) + 4 GB swap, 16 cores, Wi-Fi (~12 MiB/s), Docker 29.8 +
+    NVIDIA Container Toolkit, reachable as `ssh gpu` (Tailscale). Runner script:
+    `~/run-gym-3090.sh` (pipes `~/box_worker.py` into the image); secrets in
+    `~/.daytona-gym.env` (0600); models in the `daytona-gym-models` volume.
+  - What works on the box: image pull, model download + Megatron conversion,
+    SGLang, Daytona sandboxes, ingest shipping, Slime perf ingest, 32/32 rollouts.
+  - Attempts (2026-09-25), all visible on the ingest dashboard:
+    | Run | Settings | Result |
+    | --- | --- | --- |
+    | `run_89fb7937…` | default colocate (offload to CPU) | **host OOM**: kernel killed the Megatron actor (Ray object store 5.2 GB + CPU offload > 15 GiB) |
+    | `run_dca8dbcd…` | no offload, SGLang 30%, 6 turns × 768 | **GPU OOM** in step 0 training: ~5k-token sample's fp32 logits (152k vocab) = 3 GiB |
+    | `run_86ac7c56…` | no offload, SGLang 20%, 3 turns × 512 | steps 0–2 trained; **GPU OOM** in step 3 on a 2.8k-token straggler (Megatron grew to 17 GiB) |
+    | `run_daf327a3…` | no offload, SGLang 15%, 2 turns × 512 | **all 4 steps trained** (Slime step time 106 → 9.6 → 8.2 → 7.7 s); then a Ray actor died **after training**; kernel log shows host OOM kills in that window |
+  - Fixes already shipped from this: Ray object store capped at 2 GiB below
+    32 GiB RAM; `offload_train` / `offload_rollout` recipe knobs
+    (`--no-offload-*`); launch-time low-RAM warning (quiet when not offloading);
+    `box_worker.py` exits with the run's return code.
+  - **Monday next steps:**
+    1. Confirm what died after step 3: match `journalctl -k` OOM timestamps to
+       `~/gym-3090.log` (22:56). Suspect the end-of-run checkpoint save (Slime
+       saves at the last rollout; `--save` gathers weights into CPU RAM). Try
+       disabling the final save for smoke runs (recipe knob) or saving less.
+    2. Product fix for sample length: recipe `tool_output_limit` (tool stdout is
+       16,384 chars per observation today) + a per-rollout `max_total_tokens`
+       budget that ends the rollout as `truncated` instead of OOMing training.
+    3. Turn the working settings into a named preset (e.g. `Box24GB` /
+       low-host-RAM recipe) so a 3090/4090 user gets them without tuning.
+    4. Optional: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` for the
+       trainer to cut allocator fragmentation (verify SGLang tolerates it).
+  - Insight worth keeping: with both engines resident on the GPU, Slime steps
+    were **~8–10 s** vs ~44 s on the A100 with offload — the "switching" cost
+    disappears for small models.
   Done when the same `TrainConfig` trains there with zero code changes;
   results recorded in `FRICTION.md`.
 
@@ -369,3 +412,4 @@ Phase 4 after Phase 3.3 (task data must reach the worker)
 | 2026-09-25 | `7fe0854` | Phase 2: `dg ingest`, worker shipper, `worker_lost`, auth + hardening |
 | 2026-09-25 | `2e480a1`+ | `dg ingest deploy --daytona`; wheel build fix; live sandbox probe |
 | 2026-09-25 | (1.2) | Slime `perf/*` ingest → trainer vs overhead split; `dg ingest rm` |
+| 2026-09-25 | `6492e3b`…`58302b4` | 3.1 worker image (GHCR + Docker Hub), 3.3 dataset shipping, small-RAM fixes; 3090 attempts logged under 3.4 |

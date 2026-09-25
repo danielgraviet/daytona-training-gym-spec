@@ -14,7 +14,8 @@ DAYTONA_API_KEY, DAYTONA_GYM_INGEST_URL and DAYTONA_GYM_INGEST_TOKEN.
 Sized for a 24 GB card (RTX 3090 / 4090) in a 16 GB-RAM box: Qwen2.5-0.5B,
 colocated with both engines kept on the GPU (no CPU offload). Default colocated
 Slime parks the idle engine in host RAM each step, which OOM-killed the
-trainer on a 15 GiB box; here SGLang is capped at 30% of VRAM instead.
+trainer on a 15 GiB box; here SGLang is capped at 20% of VRAM instead and
+samples are kept short enough for their logits to fit on the GPU.
 """
 
 import json
@@ -32,13 +33,18 @@ data.write_text(
 )
 
 config = TrainConfig(
-    model=Qwen25_05B(sglang_mem_fraction=0.3),
+    # 15% of VRAM (~3.5 GB) is enough SGLang for 0.5B; the rest is Megatron's.
+    model=Qwen25_05B(sglang_mem_fraction=0.15),
     dataset=PromptJsonlDataset(data),
     recipe=Qwen25_05B_Recipe(
         batch_size=4,
         n_samples=2,
         num_rollout=4,
-        max_turns=6,
+        # Keep each multi-turn sample ~2k tokens: its fp32 logits (152k vocab)
+        # must fit next to the resident engines. Live 3090: 6 turns OOM'd at ~5k
+        # tokens, 3 turns at a 2.8k-token straggler in step 3.
+        max_turns=2,
+        max_response_len=512,
         timeout_seconds=180,
         tool_timeout_seconds=60,
         offload_train=False,
