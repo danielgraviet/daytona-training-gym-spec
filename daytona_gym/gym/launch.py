@@ -93,6 +93,7 @@ def build_plan(config: TrainConfig, *, run_id: str | None = None) -> LaunchPlan:
     )
     host_env = {
         "DAYTONA_NUM_GPUS": str(compute.num_gpus),
+        "DAYTONA_NUM_STEPS": str(recipe.num_rollout),
         "DAYTONA_TELEMETRY_PATH": str(telemetry),
         "DAYTONA_RUN_ID": rid,
         "DAYTONA_API_KEY_FILE": str(key_file),
@@ -203,6 +204,7 @@ def execute_plan(
         run_id=plan.run_id,
         gpu_cost_per_hour=_float_or_none(plan.host_env.get("DAYTONA_GPU_COST_PER_HOUR")),
         num_gpus=int(plan.host_env.get("DAYTONA_NUM_GPUS") or 1),
+        num_steps=int(plan.host_env.get("DAYTONA_NUM_STEPS") or 0) or None,
     )
     gpu_sampler = None
     if os.environ.get("DAYTONA_GYM_GPU_METRICS", "1") not in {"0", "false", "False"}:

@@ -16,11 +16,14 @@ def append_run_meta(
     run_id: str,
     gpu_cost_per_hour: float | None,
     num_gpus: int,
+    num_steps: int | None = None,
 ) -> None:
     """Best-effort: never raises (telemetry must not block launch)."""
     labels: dict[str, str] = {"run_id": run_id, "num_gpus": str(int(num_gpus))}
     if gpu_cost_per_hour is not None:
         labels["gpu_cost_per_hour"] = str(float(gpu_cost_per_hour))
+    if num_steps is not None:
+        labels["num_steps"] = str(int(num_steps))
     record = {
         "type": "metric",
         "name": RUN_META_METRIC,
@@ -49,4 +52,6 @@ def read_run_meta(metrics: Any) -> dict[str, Any]:
             out["gpu_cost_per_hour"] = float(labels["gpu_cost_per_hour"])
         if "num_gpus" in labels:
             out["num_gpus"] = int(labels["num_gpus"])
+        if "num_steps" in labels:
+            out["num_steps"] = int(labels["num_steps"])
     return out

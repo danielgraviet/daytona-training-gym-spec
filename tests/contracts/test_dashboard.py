@@ -377,3 +377,47 @@ def test_resolve_run_never_escapes_runs_dir(tmp_path) -> None:
     for bad in ("../secret", "../secret.jsonl", "ok.progress.json", ".."):
         with pytest.raises(FileNotFoundError):
             _resolve_run(runs, bad)
+
+
+def test_live_message_tracks_training_steps_not_stale_megatron_text(tmp_path) -> None:
+    """Regression: run page said 'Initializing Megatron…' through all 4 steps."""
+    import json as _json
+    import time as _time
+
+    from daytona_gym.telemetry import dashboard as dash_mod
+    from daytona_gym.telemetry import dashboard_data
+    from daytona_gym.telemetry.progress import write_progress
+    from daytona_gym.telemetry.run_meta import append_run_meta
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    path = runs / "r.jsonl"
+    lines = []
+    for i in range(4):
+        lines.append(_json.dumps({
+            "type": "span", "name": "rollout", "started_at": "2026-09-25T00:00:00+00:00",
+            "duration_seconds": 1.0,
+            "attributes": {"rollout_id": f"rollout_{i}", "training_step": i // 2, "status": "completed"},
+        }))
+    path.write_text("\n".join(lines) + "\n")
+    append_run_meta(path, run_id="r", gpu_cost_per_hour=None, num_gpus=1, num_steps=4)
+    started = _time.time() - 120
+    write_progress(runs, "r", phase="megatron", message="Initializing Megatron…", status="running", started_at=started)
+
+    live = dash_mod._run_live_snapshot(runs, "r")
+    assert live["message"] == "Training — step 2/4 (4 rollouts so far)"
+    assert live["detail"] == "Initializing Megatron…"
+    assert live["steps_seen"] == 2 and live["num_steps"] == 4
+
+    listed = dashboard_data.list_run_files(runs)[0]
+    assert listed["started_at"] == started
+    assert listed["phase"] == "training"
+
+    for i in range(4, 8):
+        with path.open("a") as fh:
+            fh.write(_json.dumps({
+                "type": "span", "name": "rollout", "started_at": "2026-09-25T00:00:00+00:00",
+                "duration_seconds": 1.0,
+                "attributes": {"rollout_id": f"rollout_{i}", "training_step": i // 2, "status": "completed"},
+            }) + "\n")
+    assert "All 4 steps' rollouts done" in dash_mod._run_live_snapshot(runs, "r")["message"]

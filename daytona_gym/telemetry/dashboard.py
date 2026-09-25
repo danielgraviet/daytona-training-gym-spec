@@ -768,11 +768,15 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
     n_rollouts = 0
     ready = False
     path_file: Path | None = None
+    steps_seen: list[str] = []
+    num_steps: int | None = None
     try:
         path_file = _resolve_run(runs_dir, stem)
         detail = data.run_detail(path_file)
         n_rollouts = len(detail.get("rollouts") or [])
         ready = n_rollouts > 0
+        steps_seen = list(detail.get("steps_seen") or [])
+        num_steps = detail.get("num_steps")
     except FileNotFoundError:
         pass
     phase = str(prog.get("phase") or ("live" if ready else "starting"))
@@ -809,9 +813,14 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
         or status in {"completed", "failed", "worker_lost"}
         or phase in {"completed", "failed"}
     )
-    # Only promote phase to "live" while still actively running.
+    # Only promote phase to "live" while still actively running. The worker's
+    # progress message stops at "Initializing Megatron…" once Slime is up, so
+    # describe training from the telemetry itself.
+    detail_msg = prog.get("detail")
     if ready and not failed and not done and status == "running":
         phase = "live"
+        detail_msg = message
+        message = _training_message(n_rollouts, steps_seen, num_steps)
     # Freeze elapsed for terminal runs (UI must not keep ticking).
     elapsed_s = prog.get("elapsed_s")
     if done and not isinstance(elapsed_s, (int, float)):
@@ -837,7 +846,9 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
     return {
         "phase": phase,
         "message": message,
-        "detail": prog.get("detail"),
+        "detail": detail_msg,
+        "steps_seen": len(steps_seen),
+        "num_steps": num_steps,
         "elapsed_s": elapsed_s,
         "started_at": started_at,
         "log_tail": [str(x) for x in log_tail[-12:]],
@@ -850,6 +861,20 @@ def _run_live_snapshot(runs_dir: Path, stem: str) -> dict:
         "returncode": prog.get("returncode"),
         "updated_at": prog.get("updated_at"),
     }
+
+
+def _training_message(n_rollouts: int, steps_seen: list[str], num_steps: int | None) -> str:
+    n = len(steps_seen)
+    if num_steps and n >= num_steps:
+        return (
+            f"All {num_steps} steps' rollouts done ({n_rollouts} rollouts) — "
+            "trainer finishing the last step / cleanup"
+        )
+    if num_steps and n:
+        return f"Training — step {n}/{num_steps} ({n_rollouts} rollouts so far)"
+    if n:
+        return f"Training — {n} step(s) seen, {n_rollouts} rollouts so far"
+    return f"Training — {n_rollouts} rollouts so far"
 
 
 _PHASE_STEPS = (

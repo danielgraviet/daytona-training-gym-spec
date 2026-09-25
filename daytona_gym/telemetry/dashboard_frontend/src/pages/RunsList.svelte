@@ -35,6 +35,24 @@
     return 'muted';
   }
 
+  function dur(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) return `${sec}s`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+    return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  }
+
+  // Stable, meaningful times: a heartbeat-based "updated" reset every poll.
+  function timeLabel(run) {
+    const last = run.progress_updated_at || run.mtime;
+    const status = run.run_status;
+    if (status === 'running' || status === 'pending') {
+      return run.started_at ? `running for ${dur(clock / 1000 - Number(run.started_at))}` : 'running';
+    }
+    if (status === 'completed' || status === 'failed') return `finished ${age(last)}`;
+    return `last seen ${age(last)}`;
+  }
+
   function age(ts) {
     if (!ts) return '—';
     const sec = Math.max(0, Math.floor((clock / 1000) - Number(ts)));
@@ -68,7 +86,7 @@
           <th class="px-3 py-2 font-medium">status</th>
           <th class="px-3 py-2 font-medium">n</th>
           <th class="px-3 py-2 font-medium">mean reward</th>
-          <th class="px-3 py-2 font-medium">updated</th>
+          <th class="px-3 py-2 font-medium">time</th>
         </tr>
       </thead>
       <tbody>
@@ -92,7 +110,7 @@
             <td class="px-3 py-2">
               {run.mean_reward == null ? '—' : Number(run.mean_reward).toFixed(3)}
             </td>
-            <td class="muted px-3 py-2">{age(run.progress_updated_at || run.mtime)}</td>
+            <td class="muted px-3 py-2">{timeLabel(run)}</td>
           </tr>
         {:else}
           <tr>

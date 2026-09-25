@@ -68,8 +68,13 @@ def _progress_status(runs_dir: Path, stem: str) -> dict[str, Any]:
             status = "running"
         else:
             status = "pending"
+    started_at = prog.get("started_at")
+    activity = prog.get("activity") if isinstance(prog.get("activity"), list) else []
+    if started_at is None and activity and isinstance(activity[0], dict):
+        started_at = activity[0].get("t")
     return {
         "run_status": apply_liveness(runs_dir, stem, status),
+        "started_at": started_at,
         "phase": phase or None,
         "progress_message": prog.get("message"),
         "progress_updated_at": prog.get("updated_at"),
@@ -105,6 +110,8 @@ def list_run_files(runs_dir: Path) -> list[dict[str, Any]]:
             elif ids:
                 item["run_status"] = "running"
             item["run_status"] = apply_liveness(runs_dir, path.stem, item["run_status"])
+            if item["run_status"] == "running" and ids:
+                item["phase"] = "training"  # worker phase text goes stale once Slime is up
             out.append(item)
         except Exception as exc:  # noqa: BLE001 — one bad file shouldn't kill the list
             out.append(
@@ -186,12 +193,23 @@ def run_detail(path: Path) -> dict[str, Any]:
                 "tools": dict(tools),
             }
         )
+    from daytona_gym.telemetry.run_meta import read_run_meta
+
+    steps_seen = sorted(
+        {
+            str(span.attributes.get("training_step"))
+            for span in store.spans
+            if span.name == "rollout" and span.attributes.get("training_step") not in (None, "")
+        }
+    )
     return {
         "name": path.name,
         "stem": path.stem,
         "path": str(path),
         "summary": summarize_run(store, ids),
         "rollouts": rollouts,
+        "steps_seen": steps_seen,
+        "num_steps": read_run_meta(store.metrics).get("num_steps"),
     }
 
 
