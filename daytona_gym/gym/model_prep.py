@@ -54,8 +54,8 @@ def ensure_model_ready(
         if on_phase is not None:
             on_phase(phase, message)
 
-    hf_dir = Path(os.environ.get("HF_CHECKPOINT", model.hf_checkpoint)).expanduser()
-    ref_dir = Path(os.environ.get("REF_LOAD", model.ref_load)).expanduser()
+    hf_dir = Path(model.resolved_hf_checkpoint()).expanduser()
+    ref_dir = Path(model.resolved_ref_load()).expanduser()
     slime = Path(os.environ.get("SLIME_ROOT", model.slime_root)).expanduser()
     megatron = Path(os.environ.get("MEGATRON_ROOT", model.megatron_root)).expanduser()
     script = os.environ.get("MODEL_SCRIPT", model.model_script)

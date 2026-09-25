@@ -247,10 +247,22 @@ export DAYTONA_GYM_INGEST_TOKEN=...   # ≥16 chars; same token opens the dashbo
 
 Goal: "move off Modal's GPUs to anything" is demonstrated, not claimed.
 
-- [ ] **3.1 Worker image contract.** Done when a published image (Slime +
+- [ ] ⏳ **3.1 Worker image contract.** Done when a published image (Slime +
   Megatron + SGLang + `daytona_gym`) runs the gym with documented paths and no
   `/root/slime` assumptions or git clone on the worker
   (`LocalSlimeCompute` defaults, `remote_job.py`).
+  - Built: `docker/worker/Dockerfile` = `slimerl/slime@sha256:0589e3b6…` (pinned)
+    + the gym wheel pip-installed into Slime's own Python (the adapter runs
+    inside Slime's process, so it must share the env). CI:
+    `.github/workflows/worker-image.yml` → `ghcr.io/danielgraviet/daytona-gym-worker:{sha,latest}`
+    (Docker storage moved to the runner's `/mnt`: the base is 21 GB compressed).
+  - Paths come from the worker's env: `DAYTONA_GYM_MODELS_DIR` (checkpoints,
+    mount a volume so weights persist), `DAYTONA_GYM_WORKDIR` (`runs/`),
+    `SLIME_ROOT` / `MEGATRON_ROOT`; defaults keep the old `/root/…` layout.
+    `.dockerignore` keeps `.env` / runs / `.git` out of the image (tested).
+  - Base image facts: amd64, Python 3.12, **requires host driver with CUDA ≥ 12.9**.
+  - Remaining: CI build green; image public on GHCR; `examples/gym_sdk/box_worker.py`
+    trains on the home 3090 (0.5B) piped into the container, no git clone.
 - [ ] **3.2 Outbound worker agent** (`daytona_gym/workers/agent.py`). Done when
   `docker run <image> daytona-gym worker --token …` dials out, receives a
   launch payload, reports lifecycle + GPU inventory, and supports safe stop —
