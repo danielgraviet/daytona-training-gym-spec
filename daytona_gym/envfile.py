@@ -22,9 +22,34 @@ def load_dotenv(path: Path | str | None = None) -> Path | None:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip().strip("'").strip('"')
         if key:
             os.environ.setdefault(key, value)
     return path
+
+
+def load_default_dotenvs() -> list[Path]:
+    """Load ``./.env`` (where the user runs ``dg``) then the repo-root ``.env``.
+
+    Existing environment variables always win; the first file wins over the
+    second for keys set in both.
+    """
+    loaded: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in (Path.cwd() / ".env", None):
+        resolved = (
+            candidate.resolve()
+            if candidate is not None
+            else Path(__file__).resolve().parents[1] / ".env"
+        )
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        path = load_dotenv(resolved)
+        if path is not None:
+            loaded.append(path)
+    return loaded

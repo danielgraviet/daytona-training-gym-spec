@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import sys
 
+from daytona_gym.envfile import load_default_dotenvs
 from daytona_gym.telemetry.inspect import main as inspect_main
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    # Every dg command sees DAYTONA_API_KEY etc. from .env without `source`.
+    load_default_dotenvs()
     if args and args[0] in {"-h", "--help"}:
         print(
             "dg — Daytona Gym helpers\n\n"
