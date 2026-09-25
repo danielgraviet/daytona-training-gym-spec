@@ -97,10 +97,40 @@ def _install_forward_env_via_shell(shell: Any, extra: dict[str, str] | None = No
                 chunk = b64[i : i + 3000]
                 shell.run(f"printf '%s' '{chunk}' >> {tmp}")
             shell.run(
-                f"(umask 077 && base64 -d {tmp} > {_REMOTE_ENV_FILE}) && rm -f {tmp}"
+                f"(umask 077 && base64 -d < {tmp} > {_REMOTE_ENV_FILE}) && rm -f {tmp}"
             )
         finally:
             shell.run("stty echo")
+
+
+_DECODE_GZ_B64 = (
+    "import base64,gzip,sys\n"
+    "raw = gzip.decompress(base64.b64decode(open(sys.argv[1], 'rb').read(), validate=True))\n"
+    "if not raw: sys.exit('empty job payload')\n"
+    "open(sys.argv[2], 'wb').write(raw)\n"
+)
+
+
+def _upload_payload_via_shell(shell: Any, remote_job: str, payload: dict[str, Any]) -> None:
+    """Type the job payload through a PTY: gzip → base64 chunks → owner-only file.
+
+    Payloads can now carry a whole dataset, so compress (JSONL shrinks ~5-10x)
+    to keep the number of shell round-trips down. Decompress with python on the
+    worker (always present; gunzip may not be).
+    """
+    import gzip
+
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    b64 = base64.b64encode(gzip.compress(raw)).decode("ascii")
+    job = shlex.quote(remote_job)
+    shell.run(f"(umask 077 && rm -f {job}.b64 {job} && : > {job}.b64)")
+    for i in range(0, len(b64), 3000):
+        shell.run(f"printf '%s' '{b64[i : i + 3000]}' >> {job}.b64")
+    # One python step (no pipe): a failed decode is a real error, never an
+    # empty job file, and there is no dependency on GNU vs BSD `base64`.
+    shell.run(
+        f"(umask 077 && python3 -c {shlex.quote(_DECODE_GZ_B64)} {job}.b64 {job}) && rm -f {job}.b64"
+    )
 
 
 def _local_package_root() -> Path:
@@ -157,7 +187,7 @@ def _sync_package_via_shell(shell: Any, remote_repo: str) -> None:
             chunk = b64[i : i + 3000]
             shell.run(f"printf '%s' '{chunk}' >> {remote_tgz}.b64")
         shell.run(
-            f"base64 -d {remote_tgz}.b64 > {remote_tgz} && rm -f {remote_tgz}.b64"
+            f"base64 -d < {remote_tgz}.b64 > {remote_tgz} && rm -f {remote_tgz}.b64"
         )
         # Ensure repo exists, then replace package tree.
         shell.run(
@@ -518,7 +548,9 @@ class SshWorker:
 
         with tempfile.TemporaryDirectory() as tmp:
             local_job = Path(tmp) / "job.json"
-            local_job.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            fd = os.open(local_job, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload))  # may embed a dataset: owner-only
             remote_job = f"/tmp/daytona_gym_job_{os.getpid()}.json"
 
             scp = self._scp_base() + [str(local_job), f"{self.host}:{remote_job}"]
@@ -698,9 +730,6 @@ class SshWorker:
             )
 
         remote_job = f"/tmp/daytona_gym_job_{os.getpid()}.json"
-        b64 = base64.b64encode(
-            json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        ).decode("ascii")
 
         ssh_cmd = self._ssh_base(force_tty=True)
         print(
@@ -726,17 +755,7 @@ class SshWorker:
             with PtyShell(ssh_cmd, on_output=capture, connect_timeout=60) as shell:
                 print("uploading job payload…", flush=True)
                 with _quiet_shell_output(shell):
-                    shell.run(
-                        f"rm -f {shlex.quote(remote_job)}.b64 {shlex.quote(remote_job)}"
-                    )
-                    for i in range(0, len(b64), 3000):
-                        chunk = b64[i : i + 3000]
-                        shell.run(
-                            f"printf '%s' '{chunk}' >> {shlex.quote(remote_job)}.b64"
-                        )
-                    shell.run(
-                        f"base64 -d {shlex.quote(remote_job)}.b64 > {shlex.quote(remote_job)}"
-                    )
+                    _upload_payload_via_shell(shell, remote_job, payload)
                     _install_forward_env_via_shell(shell)
 
                 # Clone/pull first, then overlay laptop package (unpushed DX fixes).
@@ -860,11 +879,16 @@ def config_to_remote_payload(
     """JSON payload consumed by ``python -m daytona_gym.gym.remote_job`` on the worker."""
     from daytona_gym.gym.dataset import (
         PromptJsonlDataset,
+        inline_dataset_blob,
         serialize_dataset,
     )
 
     compute = config.resolved_compute()
-    if isinstance(config.dataset, PromptJsonlDataset):
+    inline = inline_dataset_blob(config.dataset)
+    if inline is not None:
+        # Local file / local Harbor tasks: ship the data itself, not a path.
+        dataset_blob = inline
+    elif isinstance(config.dataset, PromptJsonlDataset):
         dataset_blob = {
             "kind": "prompt_jsonl",
             "path": _remote_dataset_path(config, remote_repo=remote_repo),

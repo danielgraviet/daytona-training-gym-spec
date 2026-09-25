@@ -466,6 +466,8 @@ def deserialize_dataset(blob: dict[str, Any]) -> AnyDataset:
             system_prompt=blob.get("system_prompt", ""),
             prompt_template=blob.get("prompt_template", "{input}"),
         )
+    if kind == INLINE_KIND:
+        raise ValueError("inline_jsonl datasets must be materialized with materialize_inline()")
     if kind == "harbor":
         return HarborDataset(
             dataset_name=blob.get("dataset_name", ""),
@@ -516,3 +518,77 @@ def materialize_dataset(
             label_key=dataset.label_key,
         )
     return dataset.to_prompt_jsonl(out_path=out)
+
+
+# ---- shipping local datasets with the launch (ROADMAP 3.3) -----------------
+
+INLINE_KIND = "inline_jsonl"
+INLINE_MAX_BYTES = 16 * 1024 * 1024
+
+
+def inline_dataset_blob(dataset: AnyDataset) -> dict[str, Any] | None:
+    """Embed a *local* dataset in the launch payload; None = worker fetches it.
+
+    Local JSONL files and local Harbor task folders do not exist on a BYO
+    worker (it only has a git clone), so they travel with the job. HF and
+    Harbor-registry datasets are downloaded on the worker instead.
+    """
+    import tempfile
+
+    from daytona_gym.runtime.errors import DaytonaError, ErrorCode
+
+    if isinstance(dataset, PromptJsonlDataset):
+        path = dataset.resolved_path()
+        if not path.is_file():
+            return None  # a path that only exists on the worker — send as-is
+        data, name = path.read_bytes(), path.name
+    elif isinstance(dataset, HarborDataset) and not dataset.dataset_name:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = dataset.to_prompt_jsonl(out_path=Path(tmp) / "harbor.jsonl")
+            data = out.resolved_path().read_bytes()
+        name = f"{dataset.cache_key() or 'harbor'}.jsonl"
+    else:
+        return None
+    if len(data) > INLINE_MAX_BYTES:
+        raise DaytonaError(
+            ErrorCode.USER_CODE_ERROR,
+            f"dataset {name} is {len(data) / 1e6:.1f} MB; launches embed local datasets up to "
+            f"{INLINE_MAX_BYTES // (1024 * 1024)} MB. Use HuggingFaceDataset / a Harbor registry "
+            "dataset, or place the file on the worker and pass its worker path.",
+        )
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DaytonaError(ErrorCode.USER_CODE_ERROR, f"dataset {name} is not UTF-8 JSONL") from exc
+    return {
+        "kind": INLINE_KIND,
+        "name": name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "content": content,
+        "input_key": dataset.input_key,
+        "label_key": dataset.label_key,
+    }
+
+
+def materialize_inline(blob: dict[str, Any], *, runs_dir: Path) -> PromptJsonlDataset:
+    """Worker side: write an embedded dataset to ``runs/data/`` after verifying it."""
+    import re
+
+    from daytona_gym.runtime.errors import DaytonaError, ErrorCode
+
+    data = str(blob.get("content", "")).encode("utf-8")
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != blob.get("sha256"):
+        raise DaytonaError(
+            ErrorCode.PLATFORM_ERROR, "embedded dataset failed its checksum (payload corrupted in transit)"
+        )
+    stem = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(str(blob.get("name") or "dataset")).stem)[:64]
+    out = Path(runs_dir) / "data" / f"inline_{digest[:12]}_{stem}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if not (out.is_file() and hashlib.sha256(out.read_bytes()).hexdigest() == digest):
+        out.write_bytes(data)
+    return PromptJsonlDataset(
+        path=out,
+        input_key=blob.get("input_key", "prompt"),
+        label_key=blob.get("label_key", "label"),
+    )

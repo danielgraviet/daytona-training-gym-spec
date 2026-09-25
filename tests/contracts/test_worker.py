@@ -37,24 +37,27 @@ def _config(tmp_path: Path) -> TrainConfig:
 
 def test_remote_payload_roundtrip(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
+    remote = tmp_path / "remote-repo"  # stands in for the worker's clone
     payload = config_to_remote_payload(
         cfg,
-        remote_repo="/root/daytona-training-gym-spec",
+        remote_repo=str(remote),
         skip_preflight=True,
         preflight_timeout_seconds=30,
         open=True,
         open_browser=False,
     )
     assert payload["run_name"] == "run_worker_test"
-    assert payload["dataset"]["kind"] == "prompt_jsonl"
-    assert payload["dataset"]["path"].endswith(
-        "examples/coding_dogfood/prompts/coding_one.jsonl"
-    )
+    # The local file travels with the job (3.3), not as a repo-relative path.
+    assert payload["dataset"]["kind"] == "inline_jsonl"
+    assert payload["dataset"]["content"] == '{"prompt":"x","label":"1"}\n'
     assert payload["model"]["name"] == "Qwen2.5-3B-Instruct"
     assert payload["open"] is True
 
     # Paths on Mac won't exist for /root/... model dirs — only check construct
     remote_cfg = load_config(payload)
+    written = remote_cfg.dataset.resolved_path()
+    assert written.parent == remote / "runs" / "data"
+    assert written.read_text() == '{"prompt":"x","label":"1"}\n'
     assert remote_cfg.run_name == "run_worker_test"
     assert remote_cfg.model is not None
     assert remote_cfg.recipe.batch_size == 1
@@ -206,7 +209,7 @@ def test_gpu_cost_flows_to_payload_and_launch_env(tmp_path: Path) -> None:
     cfg = replace(_config(tmp_path), gpu_cost_per_hour=2.49)
     payload = config_to_remote_payload(
         cfg,
-        remote_repo="/root/repo",
+        remote_repo=str(tmp_path / "remote-repo"),
         skip_preflight=True,
         preflight_timeout_seconds=30,
         open=False,

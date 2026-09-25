@@ -33,10 +33,20 @@ def load_config(
     *,
     on_phase: Any | None = None,
 ) -> TrainConfig:
-    from daytona_gym.gym.dataset import deserialize_dataset, materialize_dataset
+    from daytona_gym.gym.dataset import (
+        INLINE_KIND,
+        deserialize_dataset,
+        materialize_dataset,
+        materialize_inline,
+    )
 
     raw = payload["dataset"]
-    dataset_cfg = deserialize_dataset(raw) if isinstance(raw, dict) else raw
+    if isinstance(raw, dict) and raw.get("kind") == INLINE_KIND:
+        # Dataset travelled with the job (local file on the laptop).
+        runs_early = Path(payload.get("repo") or ".").expanduser() / "runs"
+        dataset_cfg = materialize_inline(raw, runs_dir=runs_early)
+    else:
+        dataset_cfg = deserialize_dataset(raw) if isinstance(raw, dict) else raw
     recipe = CodingRecipe(**payload["recipe"])
     model = None
     compute = None

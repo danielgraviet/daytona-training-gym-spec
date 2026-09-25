@@ -15,15 +15,15 @@ how it was verified). ⏳ marks work that is partly done.
 | 0 Hygiene | ✅ done | Tests green, secrets off command lines, docs point here |
 | 1 Flagship analytics | ✅ done (1.2 live check pending) | Per-step "where time went" + $ — verified live on A100 |
 | 2 Durable telemetry | ✅ done, verified live | `dg ingest` on a Daytona sandbox; A100 run shipped live; pod stop → `worker_lost` (2.3 OTLP deferred) |
-| 3 BYO portability | not started | Worker image, outbound agent, second provider |
+| 3 BYO portability | ⏳ in progress | 3.3 done; worker image, outbound agent, home 3090 next |
 | 4 Real task packs | not started | Dataset-driven seeds, reward callable, repo-scale pack |
 | 5 Analytics-only path | not started | Slime users anywhere get the dashboard via adapter + ingest token |
 
 ### Next up
 
 1. Confirm **1.2** on the next A100 run (`git pull` on the pod first).
-2. Start **Phase 3** — needs two decisions: second provider, and where the
-   worker image is published.
+2. **Phase 3**: 3.3 done; next 3.1 worker image (decide: GHCR vs Docker Hub),
+   then 3.2 outbound agent, then 3.4 on the home 3090.
 
 ## Why this phase
 
@@ -257,9 +257,19 @@ Goal: "move off Modal's GPUs to anything" is demonstrated, not claimed.
   no inbound SSH, no PTY proxy hacks (`SshWorker` stays as an escape hatch).
   - Context: the ingest host from Phase 2 is the natural control plane
     endpoint for the agent to poll.
-- [ ] **3.3 Dataset/config shipped with the launch payload.** Done when a local
+- [x] **3.3 Dataset/config shipped with the launch payload.** Done when a local
   JSONL not in git trains on the worker (customer note: `git pull` can't see it).
-- [ ] **3.4 Dogfood on a second provider** (Lambda or a bare SSH/on-prem box).
+  - Note: local `PromptJsonlDataset` files and local `HarborDataset` task
+    folders are embedded in the job (`inline_jsonl`, ≤16 MB, SHA-256 checked)
+    and written to `runs/data/inline_<sha>_<name>.jsonl` on the worker; HF and
+    Harbor-registry datasets are still fetched on the worker; worker-only
+    paths are sent unchanged. Oversized datasets fail with guidance. Job files
+    are 0600. PTY uploads are gzip'd and decoded in one python step (found:
+    macOS `base64` rejects a file arg, and `base64 | python` hid the failure
+    as an empty job file). `tests/contracts/test_dataset_shipping.py`.
+  - ⏳ Live check: laptop → pod launch with a JSONL that is not in git.
+- [ ] **3.4 Dogfood on a second provider** — **chosen: the user's home RTX 3090**
+  (24 GB: expect the 0.5B preset; 3B colocated likely won't fit).
   Done when the same `TrainConfig` trains there with zero code changes;
   results recorded in `FRICTION.md`.
 
