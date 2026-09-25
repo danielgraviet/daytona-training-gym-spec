@@ -135,16 +135,16 @@ async def stop_server(sandbox) -> None:
 async def start_server(sandbox) -> None:
     from daytona import SessionExecuteRequest
 
-    try:
-        await sandbox.process.create_session(SESSION)
-    except Exception:  # noqa: BLE001 — session may already exist
-        pass
+    # A fresh session per start: once the previous server is killed its
+    # session has exited, and Daytona refuses new commands in an exited session.
+    session = f"{SESSION}-{int(time.time())}"
+    await sandbox.process.create_session(session)
     command = (
         f"mkdir -p {DATA_DIR} && exec python -m daytona_gym.cli ingest "
         f"--host 0.0.0.0 --port {PORT} --data-dir {DATA_DIR} >> {LOG_PATH} 2>&1"
     )
     await sandbox.process.execute_session_command(
-        SESSION, SessionExecuteRequest(command=command, run_async=True)
+        session, SessionExecuteRequest(command=command, run_async=True)
     )
 
 
