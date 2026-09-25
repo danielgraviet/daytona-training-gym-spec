@@ -37,7 +37,8 @@ PORT = 8080
 DATA_DIR = "/home/daytona/gym-data"
 LOG_PATH = "/home/daytona/ingest.log"
 SESSION = "dg-ingest"
-DEFAULT_SPEC = "git+https://github.com/danielgraviet/daytona-training-gym-spec.git@main"
+REPO_URL = "https://github.com/danielgraviet/daytona-training-gym-spec.git"
+DEFAULT_REF = "main"
 
 
 def _log(msg: str) -> None:
@@ -77,8 +78,38 @@ async def read_sandbox_token(sandbox) -> str | None:
     return value or None
 
 
+def resolve_spec(ref: str) -> str:
+    """Pin a branch/tag to its commit so re-deploys really update the code.
+
+    pip treats an already-installed ``git+…@main`` as satisfied (same name +
+    version), so redeploying a moving branch silently kept old code.
+    """
+    import re
+    import subprocess
+
+    if re.fullmatch(r"[0-9a-f]{40}", ref):
+        return f"git+{REPO_URL}@{ref}"
+    try:
+        out = subprocess.run(
+            ["git", "ls-remote", REPO_URL, ref], capture_output=True, text=True, timeout=30
+        ).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        out = []
+    sha = out[0] if out and re.fullmatch(r"[0-9a-f]{40}", out[0]) else None
+    if sha is None:
+        _log(f"could not resolve {ref!r} to a commit; installing the ref directly")
+        return f"git+{REPO_URL}@{ref}"
+    _log(f"{ref} → {sha[:12]}")
+    return f"git+{REPO_URL}@{sha}"
+
+
 async def install_package(sandbox, spec: str) -> None:
-    cmd = f"python -m pip install --quiet --upgrade {shlex.quote(spec)}"
+    quoted = shlex.quote(spec)
+    # Deps first (no-op when present), then force the gym itself to this commit.
+    cmd = (
+        f"python -m pip install --quiet {quoted} && "
+        f"python -m pip install --quiet --force-reinstall --no-deps {quoted}"
+    )
     _log(f"installing {spec} (first time can take a minute)")
     resp = await sandbox.process.exec(cmd, timeout=600)
     if getattr(resp, "exit_code", 1) != 0:
@@ -91,6 +122,14 @@ async def process_healthy(sandbox) -> bool:
         timeout=30,
     )
     return getattr(resp, "exit_code", 1) == 0
+
+
+async def stop_server(sandbox) -> None:
+    await sandbox.process.exec("pkill -f 'daytona_gym.cli ingest' || true", timeout=30)
+    for _ in range(10):
+        if not await process_healthy(sandbox):
+            return
+        await asyncio.sleep(0.5)
 
 
 async def start_server(sandbox) -> None:
@@ -123,9 +162,7 @@ def wait_public_health(url: str, timeout: float = 90.0) -> None:
     raise RuntimeError(f"ingest not healthy via preview URL {url}: {last}")
 
 
-async def deploy(
-    *, name: str, spec: str, token: str | None
-) -> tuple[str, str, str]:
+async def deploy(*, name: str, spec: str, token: str | None) -> tuple[str, str, str]:
     """Returns (sandbox_id, url, token)."""
     from daytona import AsyncDaytona
 
@@ -153,17 +190,19 @@ async def deploy(
 
         await install_package(sandbox, spec)
         if await process_healthy(sandbox):
-            _log("dg ingest already running")
+            # Freshly installed code only takes effect in a new process.
+            _log("restarting dg ingest on the new code (shippers retry through the gap)")
+            await stop_server(sandbox)
         else:
             _log("starting dg ingest")
-            await start_server(sandbox)
-            for _ in range(30):
-                if await process_healthy(sandbox):
-                    break
-                await asyncio.sleep(1)
-            else:
-                tail = await sandbox.process.exec(f"tail -n 40 {LOG_PATH}", timeout=30)
-                raise RuntimeError(f"dg ingest did not start:\n{tail.result}")
+        await start_server(sandbox)
+        for _ in range(30):
+            if await process_healthy(sandbox):
+                break
+            await asyncio.sleep(1)
+        else:
+            tail = await sandbox.process.exec(f"tail -n 40 {LOG_PATH}", timeout=30)
+            raise RuntimeError(f"dg ingest did not start:\n{tail.result}")
 
         preview = await sandbox.get_preview_link(PORT)
         url = preview.url.rstrip("/")
@@ -179,7 +218,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--daytona", action="store_true", required=True, help="Deploy to a Daytona sandbox")
     parser.add_argument("--name", default="daytona-gym-ingest", help="Sandbox name (default: daytona-gym-ingest)")
-    parser.add_argument("--spec", default=DEFAULT_SPEC, help="pip spec for daytona_gym inside the sandbox")
+    parser.add_argument(
+        "--ref",
+        default=DEFAULT_REF,
+        help="Git branch/tag/sha of the gym to run (default: main, pinned to its current commit)",
+    )
     parser.add_argument(
         "--write-env",
         type=Path,
@@ -193,7 +236,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     token = (os.environ.get(INGEST_TOKEN_ENV) or "").strip() or None
     try:
-        sandbox_id, url, token = asyncio.run(deploy(name=args.name, spec=args.spec, token=token))
+        spec = resolve_spec(args.ref)
+        sandbox_id, url, token = asyncio.run(deploy(name=args.name, spec=spec, token=token))
     except Exception as exc:  # noqa: BLE001
         print(f"deploy failed: {exc}", file=sys.stderr)
         return 1
