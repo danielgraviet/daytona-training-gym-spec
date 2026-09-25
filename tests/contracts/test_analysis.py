@@ -79,6 +79,12 @@ def test_env_bound_step_with_straggler_and_cost() -> None:
     assert s1["bound"] == "inference" and s1["train_phase_seconds"] is None
 
     totals = out["totals"]
+    # environment = step-0 idle 20s; inference = 6s + step-1 4s; trainer = 10s gap
+    assert totals["time_breakdown"]["environment"]["seconds"] == pytest.approx(20)
+    assert totals["time_breakdown"]["inference"]["seconds"] == pytest.approx(10)
+    assert totals["time_breakdown"]["trainer"]["seconds"] == pytest.approx(10)
+    assert totals["bottleneck"] == "environment"
+    assert totals["bottleneck_share"] == pytest.approx(0.5)
     assert totals["n_failed"] == 1
     assert totals["failed_waste_seconds"] == pytest.approx(4)
     assert totals["sandbox_provision"]["n"] == 2
@@ -121,3 +127,16 @@ def test_reused_rollout_ids_across_steps_stay_separate() -> None:
     out = analyze_run(store)
     assert [s["n_rollouts"] for s in out["steps"]] == [1, 1]
     assert [round(r["wall"]) for r in out["rollouts"]] == [2, 3]
+
+
+def test_trainer_bound_run_like_live_a100() -> None:
+    """Shape of run_b17 on A100: short rollouts, long derived train gaps."""
+    store = InMemoryTelemetryStore()
+    t = 0.0
+    for step in range(4):
+        _rollout(store, f"r{step}", t, [("sandbox.provision", 1), ("inference.generate", 2), ("tool.run_tests", 1)], step=step)
+        t += 4 + 30  # 30s train phase between steps
+    totals = analyze_run(store)["totals"]
+    assert totals["bottleneck"] == "trainer"
+    assert totals["rollout_bound"] == "environment"  # 2 of 4s idle → >= half
+    assert totals["bottleneck_share"] == pytest.approx(90 / (8 + 8 + 90))

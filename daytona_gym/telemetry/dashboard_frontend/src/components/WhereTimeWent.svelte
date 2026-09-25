@@ -77,6 +77,12 @@
   function pct(v) {
     return `${Math.round((v || 0) * 100)}%`;
   }
+  const splitColors = { environment: 'var(--bad)', inference: 'var(--accent)', trainer: 'var(--ok)' };
+  let split = $derived(
+    Object.entries(totals.time_breakdown || {})
+      .filter(([, v]) => v.seconds > 0)
+      .map(([name, v]) => ({ name, ...v, color: splitColors[name] || 'var(--muted)' })),
+  );
   let idleFrac = $derived(
     totals.rollout_phase_seconds > 0 ? totals.env_wait_seconds / totals.rollout_phase_seconds : 0,
   );
@@ -112,9 +118,25 @@
         <p class="m-0 text-2xl font-semibold">{fmtSecs(totals.sandbox_provision?.p95)}</p>
         <p class="muted m-0 text-xs">p50 {fmtSecs(totals.sandbox_provision?.p50)} · n={totals.sandbox_provision?.n}</p>
       </div>
-      <div class="panel p-3" title={defs.bound}>
+      <div class="panel p-3" title={defs.bottleneck}>
         <p class="muted m-0 text-xs uppercase tracking-wide">Bottleneck</p>
-        <p class="m-0 text-2xl font-semibold {totals.bound === 'environment' ? 'warn' : ''}">{totals.bound}</p>
+        <p class="m-0 text-2xl font-semibold {totals.bottleneck === 'environment' ? 'warn' : ''}">
+          {totals.bottleneck}
+          <span class="muted text-sm font-normal">{pct(totals.bottleneck_share)}</span>
+        </p>
+        {#if split.length}
+          <div class="split mt-1" aria-label="step time split">
+            {#each split as part}
+              <span
+                style="width: {part.share * 100}%; background: {part.color}"
+                title="{part.name}: {fmtSecs(part.seconds)} ({pct(part.share)})"
+              ></span>
+            {/each}
+          </div>
+          <p class="muted m-0 mt-1 text-xs">
+            {#each split as part, i}{i ? ' · ' : ''}{part.name} {pct(part.share)}{/each}
+          </p>
+        {/if}
         {#if totals.n_failed}
           <p class="muted m-0 text-xs" title={defs.failed_waste_seconds}>
             {fmtSecs(totals.failed_waste_seconds)} wasted on {totals.n_failed} failed
@@ -204,7 +226,7 @@
               <th class="px-3 py-2 font-medium" title={defs.straggler_tax_seconds}>straggler</th>
               <th class="px-3 py-2 font-medium" title={defs.train_phase_seconds}>train (derived)</th>
               <th class="px-3 py-2 font-medium">slowest rollout</th>
-              <th class="px-3 py-2 font-medium">bound</th>
+              <th class="px-3 py-2 font-medium" title={defs.bound}>rollout bound</th>
             </tr>
           </thead>
           <tbody>
@@ -243,6 +265,13 @@
 {/if}
 
 <style>
+  .split {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--border);
+  }
   .legend {
     display: inline-block;
     width: 10px;

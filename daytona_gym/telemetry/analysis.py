@@ -57,8 +57,15 @@ DEFINITIONS: dict[str, str] = {
         "trainer-side timings are ingested."
     ),
     "bound": (
-        "'environment' when environment wait is at least half of the rollout "
-        "phase, otherwise 'inference'."
+        "Per step, rollout phase only: 'environment' when environment wait is "
+        "at least half of the rollout phase, otherwise 'inference'."
+    ),
+    "bottleneck": (
+        "Run-level: the largest of three buckets summed over steps — "
+        "environment (GPU idle waiting on envs), inference (time with at least "
+        "one generation in flight), trainer (derived train phase: train + "
+        "offload/onload + weight sync). Share = bucket / sum of the three. The "
+        "last step's train phase is unknown and not counted."
     ),
     "failed_waste_seconds": (
         "Inference + sandbox + tool seconds spent on rollouts that ended "
@@ -355,6 +362,14 @@ def analyze_run(
     env_wait_total = sum(s["env_wait_seconds"] for s in steps)
     phase_total = sum(s["rollout_phase_seconds"] for s in steps)
     train_total = sum(s["train_phase_seconds"] or 0.0 for s in steps)
+    inference_total = sum(s["inference_busy_seconds"] for s in steps)
+    breakdown = {
+        "environment": env_wait_total,
+        "inference": inference_total,
+        "trainer": train_total,
+    }
+    breakdown_sum = sum(breakdown.values())
+    bottleneck = max(breakdown, key=breakdown.__getitem__) if breakdown_sum > 0 else "unknown"
 
     totals = {
         "n_rollouts": len(rollouts),
@@ -367,11 +382,19 @@ def analyze_run(
         "env_wait_fraction_of_run": (env_wait_total / run_wall) if run_wall > 0 else 0.0,
         "straggler_tax_seconds": sum(s["straggler_tax_seconds"] for s in steps),
         "failed_waste_seconds": failed_waste,
-        "bound": (
+        "rollout_bound": (
             "environment"
             if phase_total > 0 and env_wait_total >= 0.5 * phase_total
             else ("inference" if phase_total > 0 else "unknown")
         ),
+        "bottleneck": bottleneck,
+        "bottleneck_share": (
+            breakdown[bottleneck] / breakdown_sum if breakdown_sum > 0 else 0.0
+        ),
+        "time_breakdown": {
+            k: {"seconds": v, "share": (v / breakdown_sum) if breakdown_sum > 0 else 0.0}
+            for k, v in breakdown.items()
+        },
         "sandbox_provision": {
             "n": len(provision),
             "p50": percentile(provision, 50),

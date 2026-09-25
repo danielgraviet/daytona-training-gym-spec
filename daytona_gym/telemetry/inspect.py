@@ -235,7 +235,14 @@ def _print_analysis(
     print()
     print(
         f"where time went  ({totals['n_steps']} step(s), "
-        f"bound={totals['bound']})"
+        f"bottleneck={totals['bottleneck']} {totals['bottleneck_share']:.0%})"
+    )
+    parts = totals["time_breakdown"]
+    print(
+        "  step time split           "
+        + "  ".join(
+            f"{name} {_fmt_secs(v['seconds'])} ({v['share']:.0%})" for name, v in parts.items()
+        )
     )
     print(
         f"  gpu idle waiting on envs  {_fmt_secs(wait)}"
@@ -270,7 +277,7 @@ def _print_analysis(
               "TrainConfig(gpu_cost_per_hour=...))")
     if len(out["steps"]) > 1:
         print()
-        print("  step  rollouts  phase     env-wait  straggler  bound")
+        print("  step  rollouts  phase     env-wait  straggler  rollout-bound")
         for s in out["steps"][-10:]:
             print(
                 f"  {s['step']:>4}  {s['n_rollouts']:>8}  {_fmt_secs(s['rollout_phase_seconds']):>8}"
