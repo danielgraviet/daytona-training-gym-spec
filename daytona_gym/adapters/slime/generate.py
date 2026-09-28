@@ -33,6 +33,31 @@ def _env_truthy(name: str, default: bool = False) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _apply_analytics_env(args: Any) -> None:
+    """Wire env vars used by analytics-only Slime (no TrainConfig launcher)."""
+    if not getattr(args, "daytona_telemetry_path", None):
+        path = os.environ.get("DAYTONA_TELEMETRY_PATH")
+        if path and str(path).strip():
+            try:
+                args.daytona_telemetry_path = str(path).strip()
+            except Exception:
+                pass
+    if not getattr(args, "daytona_run_id", None):
+        rid = os.environ.get("DAYTONA_RUN_ID")
+        if rid and str(rid).strip():
+            try:
+                args.daytona_run_id = str(rid).strip()
+            except Exception:
+                pass
+    if not getattr(args, "daytona_project_id", None):
+        proj = os.environ.get("DAYTONA_PROJECT_ID")
+        if proj and str(proj).strip():
+            try:
+                args.daytona_project_id = str(proj).strip()
+            except Exception:
+                pass
+
+
 def _resolve_float_arg(args: Any, attr: str, env_name: str) -> float | None:
     value = getattr(args, attr, None)
     if value is not None:
@@ -116,13 +141,25 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     """Slime `--custom-generate-function-path` hook.
 
     Import path: `daytona_gym.adapters.slime.generate`
+
+    Analytics-only (no ``TrainConfig``): set ``DAYTONA_TELEMETRY_PATH`` +
+    ``DAYTONA_RUN_ID`` (and optionally ``DAYTONA_GYM_INGEST_*`` + ``dg ship -f``).
     """
+    _apply_analytics_env(args)
     runtime = build_environment_runtime(args)
     generator = _resolve_generator(args)
     _store, tracer, metrics = bind_telemetry(args)
     tokenizer: Tokenizer = resolve_tokenizer(args)
 
-    run_id = str(getattr(args, "daytona_run_id", None) or new_run_id())
+    run_id = str(
+        getattr(args, "daytona_run_id", None)
+        or os.environ.get("DAYTONA_RUN_ID")
+        or new_run_id()
+    )
+    try:
+        args.daytona_run_id = run_id
+    except Exception:
+        pass
     rollout_id = _daytona_rollout_id(sample)
     sample_id = _sample_id(sample)
     seed_files = _resolve_seed_files(args, sample)

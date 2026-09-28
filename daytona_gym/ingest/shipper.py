@@ -341,3 +341,110 @@ def push_files(paths: list[Path], *, config: IngestConfig, timeout: float = 600.
             print(f"{run_id}: push failed: {exc}")
             rc = 1
     return rc
+
+
+def ship_main(argv: list[str] | None = None) -> int:
+    """``dg ship`` / ``python -m daytona_gym.ingest.shipper`` — push or follow a run.
+
+    Analytics-only path (no ``TrainConfig``)::
+
+        export DAYTONA_GYM_INGEST_URL=...
+        export DAYTONA_GYM_INGEST_TOKEN=...
+        dg ship -f runs/my_run.jsonl
+    """
+    import argparse
+    import signal
+    import sys
+
+    from daytona_gym.envfile import load_default_dotenvs
+
+    load_default_dotenvs()
+    parser = argparse.ArgumentParser(
+        prog="dg ship",
+        description=(
+            "Ship run telemetry to DAYTONA_GYM_INGEST_URL. "
+            "Use --follow while Slime trains; omit it to backfill once."
+        ),
+    )
+    parser.add_argument(
+        "path",
+        type=Path,
+        help="runs/<id>.jsonl (created by daytona_gym generate via DAYTONA_TELEMETRY_PATH)",
+    )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Override run id (default: filename stem)",
+    )
+    parser.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        help="Keep shipping until Ctrl+C (for live analytics-only Slime runs)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="Follow poll interval seconds (default 2)",
+    )
+    args = parser.parse_args(argv)
+    path = args.path.expanduser()
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    run_id = args.run_id or (
+        path.name[: -len(".jsonl")] if path.name.endswith(".jsonl") else path.stem
+    )
+    if not valid_run_id(run_id):
+        print(f"invalid run id: {run_id!r}", file=sys.stderr)
+        return 2
+    config = IngestConfig.from_env()
+    if config is None:
+        print(
+            "set DAYTONA_GYM_INGEST_URL and DAYTONA_GYM_INGEST_TOKEN "
+            "(or put them in .env)",
+            file=sys.stderr,
+        )
+        return 2
+
+    if not args.follow:
+        if not path.is_file():
+            print(f"{path}: not found", file=sys.stderr)
+            return 1
+        return push_files([path], config=config)
+
+    shipper = TelemetryShipper(
+        config,
+        telemetry_path=path,
+        run_id=run_id,
+        interval_seconds=max(0.5, float(args.interval)),
+    )
+    print(f"ship: following {path} → {config.run_url(run_id)}", flush=True)
+    _warn_if_unreachable(config)
+    shipper.start()
+
+    stopping = threading.Event()
+
+    def _stop(*_a: object) -> None:
+        stopping.set()
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    try:
+        while not stopping.wait(0.5):
+            pass
+    finally:
+        shipper.stop(drain_timeout=30.0)
+        print(
+            f"ship: stopped ({shipper.bytes_shipped} bytes shipped)",
+            flush=True,
+        )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return ship_main(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

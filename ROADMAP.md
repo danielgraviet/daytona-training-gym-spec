@@ -16,15 +16,14 @@ how it was verified). ⏳ marks work that is partly done.
 | 1 Flagship analytics | ✅ done (1.2 live check pending) | Per-step "where time went" + $ — verified live on A100 |
 | 2 Durable telemetry | ✅ done, verified live | `dg ingest` on a Daytona sandbox; A100 run shipped live; pod stop → `worker_lost` (2.3 OTLP deferred) |
 | 3 BYO portability | ✅ exit met | 3.4 Vast 4090 green (`run_e169…`, 32 rollouts); 3.2 agent built (live dogfood optional) |
-| 4 Real task packs | ⏳ exit pending live reward | Seeds/reward/ToyCodingRecipe/repo_pack shipped; Vast smoke proved dataset seeds |
-| 5 Analytics-only path | not started | Slime users anywhere get the dashboard via adapter + ingest token |
+| 4 Real task packs | ✅ done (3B exit optional) | Dataset seeds default; ToyCodingRecipe; reward callable; repo pack |
+| 5 Analytics-only path | ✅ done | Slime anywhere → adapter + `dg ship` → ingest dashboard |
 
 ### Next up
 
-1. ~~Phase 4 code~~ — 4.1–4.4 in tree; Vast `run_dc6b…` used Harbor `solution.py` seeds (not add(a,b)).
-2. **Re-dogfood Harbor on Vast** after `PYTHONPATH=.` nested-test fix (0.5B still weak at tool use).
-3. Optional: create Daytona snapshot + `repo_pack_dogfood.py --snapshot` for provision p95.
-4. Then Phase 5 analytics-only path.
+1. Optional: 3B Harbor dogfood on Vast for Phase 4 reward=1 exit.
+2. Optional: Daytona snapshot + `repo_pack_dogfood.py --snapshot` provision p95.
+3. Roadmap complete through Phase 5 — pick from Ideas / Deferred, or dogfood.
 
 
 ## Why this phase
@@ -349,15 +348,18 @@ Goal: move past the hardcoded `add(a,b)` seed.
     exit criteria. Snapshot provision compare still optional.
 ---
 
-## Phase 5 — Analytics-only adoption path
+## Phase 5 — Analytics-only adoption path ✅
 
-- [ ] Teams already running Slime (anywhere, including on Modal) get the
+- [x] Teams already running Slime (anywhere, including on Modal) get the
   dashboard by pointing `--custom-generate-function-path` at our adapter plus
   `DAYTONA_GYM_INGEST_URL/TOKEN` — no launcher, no worker. One page, copy-paste
   snippet. Done when a Slime run launched outside `TrainConfig` shows up in
   `dg ingest` with the full "where time went" view.
-  - Context: Phase 2 makes this mostly documentation + a standalone shipper
-    entrypoint (`python -m daytona_gym.ingest.shipper runs/<id>.jsonl`).
+  - Note: [`docs/ANALYTICS_ONLY.md`](docs/ANALYTICS_ONLY.md) + `dg ship [-f]`
+    (`python -m daytona_gym.ingest.shipper`). `generate` reads
+    `DAYTONA_TELEMETRY_PATH` / `DAYTONA_RUN_ID` from env. Contract:
+    `tests/contracts/test_analytics_only.py`. Live outside-TrainConfig Slime
+    dogfood is optional (same ingest path as Phase 2 shipper).
 
 ---
 
@@ -411,4 +413,5 @@ Phase 4 after Phase 3.3 (task data must reach the worker)
 | 2026-09-25 | (1.2) | Slime `perf/*` ingest → trainer vs overhead split; `dg ingest rm` |
 | 2026-09-25 | `6492e3b`…`58302b4` | 3.1 worker image (GHCR + Docker Hub), 3.3 dataset shipping, small-RAM fixes; 3090 attempts logged under 3.4 |
 | 2026-09-28 | `b6cf159` | Phase 3.4 Vast 4090 green; ingest/worker harden |
-| 2026-09-28 | (phase 4) | Dataset-driven seeds, ToyCodingRecipe, reward callable, repo_pack |
+| 2026-09-28 | `d032f8e` | Phase 4: dataset-driven seeds, ToyCodingRecipe, reward callable, repo_pack |
+| 2026-09-28 | (phase 5) | Analytics-only: `docs/ANALYTICS_ONLY.md` + `dg ship -f` |

@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
             "  dg ingest watch --daytona    redeploy when /healthz fails\n"
             "  dg ingest rm RUN   delete a run from the ingest host\n"
             "  dg ingest push runs/ID.jsonl   backfill a run that wasn't shipped\n"
+            "  dg ship [-f] runs/ID.jsonl     ship / follow telemetry (analytics-only)\n"
             "  dg worker          outbound GPU agent (claims jobs from ingest)\n"
             "  dg run main.py     run a Modal-shaped train script (or uv run)\n"
             "  dg run list|status|logs|wait|stop\n"
@@ -79,6 +80,10 @@ def main(argv: list[str] | None = None) -> int:
         from daytona_gym.ingest.server import main as ingest_main
 
         return ingest_main(args[1:])
+    if args and args[0] in {"ship", "shipper"}:
+        from daytona_gym.ingest.shipper import ship_main
+
+        return ship_main(args[1:])
     if args and args[0] == "worker":
         from daytona_gym.workers.agent import main as worker_main
 

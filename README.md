@@ -84,11 +84,15 @@ Example (aspirational):
 - **Detached:** `launch(detach=True)` (or `remote_from_laptop.py --launch --detach`) returns as soon as
   `run.training_run_id` + `run.dashboard_url` are ready; training keeps going on the GPU worker.
 - Local dashboard: `dg dash` / `dg open` over `runs/*.jsonl`.
-- **Durable run history (optional):** `dg ingest deploy --daytona` runs it in a long-lived Daytona
+  - **Durable run history (optional):** `dg ingest deploy --daytona` runs it in a long-lived Daytona
   sandbox (or run `dg ingest` anywhere reachable over HTTPS), then set
   `DAYTONA_GYM_INGEST_URL` + `DAYTONA_GYM_INGEST_TOKEN` before launching. The worker ships
   telemetry there, the dashboard is served from there, and runs survive the pod
   (a pod that dies mid-run shows `worker_lost`). See `ROADMAP.md` Phase 2.
+- **Analytics-only (already on Slime):** point
+  `--custom-generate-function-path` at `daytona_gym.adapters.slime.generate.generate`,
+  set `DAYTONA_TELEMETRY_PATH` + ingest URL/token, and run `dg ship -f runs/<id>.jsonl`.
+  No `TrainConfig` required — copy-paste: [`docs/ANALYTICS_ONLY.md`](docs/ANALYTICS_ONLY.md).
 - **Where the time went:** `dg stats <run.jsonl>` and the run page show, per training step,
   GPU time idle waiting on environments, straggler tax, sandbox provision p95, and the
   bottleneck (environment vs inference). Pass `TrainConfig(gpu_cost_per_hour=...)` (or
