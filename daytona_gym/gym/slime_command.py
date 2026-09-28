@@ -66,15 +66,17 @@ def build_runtime_env(
         "DAYTONA_TELEMETRY_PATH": str(telemetry_path),
         "DAYTONA_MAX_CONCURRENCY": str(recipe.effective_max_concurrency()),
         "DAYTONA_SEED_CODING": "1" if recipe.seed_coding else "0",
-        "DAYTONA_SEED_PROFILE": recipe.seed_profile,
         "DAYTONA_BOOTSTRAP_RUN_TESTS": "1" if recipe.bootstrap_run_tests else "0",
-        "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD": recipe.bootstrap_run_tests_cmd,
         "DAYTONA_REQUIRE_PASSING_TESTS": "1" if recipe.require_passing_tests else "0",
         "DAYTONA_ALLOW_ABORTED": "1" if recipe.allow_aborted else "0",
         "DAYTONA_RUN_ID": run_id,
         "DAYTONA_WORKER_ID": default_worker_id(),
     }
-    optional: list[tuple[str, float | int | None]] = [
+    if recipe.seed_coding:
+        env_vars["DAYTONA_SEED_PROFILE"] = recipe.seed_profile
+    if recipe.bootstrap_run_tests and recipe.bootstrap_run_tests_cmd:
+        env_vars["DAYTONA_BOOTSTRAP_RUN_TESTS_CMD"] = recipe.bootstrap_run_tests_cmd
+    optional: list[tuple[str, float | int | str | None]] = [
         ("DAYTONA_TIMEOUT_SECONDS", recipe.timeout_seconds),
         ("DAYTONA_TOOL_TIMEOUT_SECONDS", recipe.tool_timeout_seconds),
         ("DAYTONA_SANDBOX_TIMEOUT_SECONDS", recipe.sandbox_timeout_seconds),
@@ -82,9 +84,12 @@ def build_runtime_env(
         ("DAYTONA_MAX_TOOLS_PER_TURN", recipe.max_tools_per_turn),
         ("DAYTONA_STDOUT_LIMIT", recipe.tool_output_limit),
         ("DAYTONA_MAX_TOTAL_TOKENS", recipe.max_total_tokens),
+        ("DAYTONA_SNAPSHOT", recipe.snapshot),
+        ("DAYTONA_IMAGE", recipe.image),
+        ("DAYTONA_REWARD_PATH", recipe.reward_path),
     ]
     for key, value in optional:
-        if value is not None:
+        if value is not None and str(value).strip():
             env_vars[key] = str(value)
 
     if "DAYTONA_API_KEY" in env_vars:

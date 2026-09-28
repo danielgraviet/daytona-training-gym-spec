@@ -19,6 +19,7 @@ from daytona_gym.gym.recipe import (
     Qwen25_3B_Recipe,
     Qwen25_7B_Recipe,
     Qwen25_14B_Recipe,
+    ToyCodingRecipe,
 )
 from daytona_gym.gym.run import TrainingRun
 from daytona_gym.gym.worker import LocalWorker, SshWorker
@@ -42,6 +43,7 @@ __all__ = [
     "Qwen25_14B_Recipe",
     "SoftSlimeModel",
     "SshWorker",
+    "ToyCodingRecipe",
     "TrainConfig",
     "TrainingRun",
 ]

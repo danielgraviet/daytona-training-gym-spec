@@ -40,7 +40,7 @@ from pathlib import Path
 from daytona_gym import (
     PromptJsonlDataset,
     Qwen25_3B,
-    Qwen25_3B_Recipe,
+    ToyCodingRecipe,
     TrainConfig,
     TrainingRun,
 )
@@ -55,7 +55,7 @@ def build_config() -> TrainConfig:
         dataset=PromptJsonlDataset(
             REPO / "examples" / "coding_dogfood" / "prompts" / "coding_one.jsonl",
         ),
-        recipe=Qwen25_3B_Recipe(),
+        recipe=ToyCodingRecipe(),
         repo=REPO,
     )
 

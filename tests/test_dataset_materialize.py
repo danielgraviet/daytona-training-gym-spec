@@ -42,9 +42,24 @@ def test_harbor_local_pack_writes_seed_files(tmp_path: Path) -> None:
     assert any(k.endswith("solution.py") or k == "solution.py" for k in label["seed_files"])
     seeds = seed_files_from_label(label)
     assert seeds
+    assert "run_tests" in rows[0]["prompt"] or "write_file" in rows[0]["prompt"]
 
 
-def test_generate_prefers_sample_seed_over_profile() -> None:
+def test_repo_pack_materializes_multifile(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1] / "examples/gym_sdk/repo_pack"
+    ds = HarborDataset(path=root, train_size=1, shuffle_tasks=False)
+    out = materialize_dataset(ds, runs_dir=tmp_path)
+    rows = list(out.rows())
+    assert len(rows) == 1
+    label = rows[0]["label"]
+    assert "calc/ops.py" in label["seed_files"]
+    assert "tests/test_ops.py" in label["seed_files"]
+    assert "mul" in label["seed_files"]["calc/ops.py"]
+
+
+def test_generate_prefers_sample_seed_over_profile(monkeypatch) -> None:
+    monkeypatch.setenv("DAYTONA_SEED_CODING", "1")
+
     class _Sample:
         label = {
             "seed_files": {"solution.py": "def two_sum(...):\n    pass\n"},
@@ -57,6 +72,19 @@ def test_generate_prefers_sample_seed_over_profile() -> None:
     files = _resolve_seed_files(_Args(), _Sample())
     assert "solution.py" in files
     assert "broken.py" not in files
+
+
+def test_resolve_seed_empty_without_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv("DAYTONA_SEED_CODING", raising=False)
+    monkeypatch.setenv("DAYTONA_SEED_PROFILE", "basic")
+
+    class _Sample:
+        label = "fixed"
+
+    class _Args:
+        daytona_seed_files = None
+
+    assert _resolve_seed_files(_Args(), _Sample()) == {}
 
 
 def test_hf_serialize_shape() -> None:

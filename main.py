@@ -19,7 +19,7 @@ What "working" looks like:
   * idle-GPU $ is populated (gpu_cost_per_hour below)
 """
 
-from daytona_gym import PromptJsonlDataset, Qwen25_3B, Qwen25_3B_Recipe, TrainConfig
+from daytona_gym import PromptJsonlDataset, Qwen25_3B, ToyCodingRecipe, TrainConfig
 from daytona_gym.envfile import load_dotenv
 
 load_dotenv()
@@ -27,7 +27,7 @@ load_dotenv()
 config = TrainConfig(
     model=Qwen25_3B(),
     dataset=PromptJsonlDataset("examples/coding_dogfood/prompts/coding_pack.jsonl"),
-    recipe=Qwen25_3B_Recipe(
+    recipe=ToyCodingRecipe(
         batch_size=4,  # prompts per step
         n_samples=2,  # rollouts per prompt → 8 concurrent sandboxes per step
         num_rollout=4,  # 4 training steps → 4 rows in the step table

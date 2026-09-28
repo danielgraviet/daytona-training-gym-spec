@@ -69,11 +69,65 @@ def test_modal_shaped_build_dry_run(tmp_path: Path) -> None:
     assert run.training_run_id == "run_testgym"
     assert run.run_id == run.training_run_id
     joined = " ".join(run.command)
-    assert "daytona_gym.adapters.slime.generate_dogfood.generate" in joined
+    assert "daytona_gym.adapters.slime.generate.generate" in joined
     assert "--working-dir=" in joined
     assert str((tmp_path / "slime").resolve()) in joined
     assert "DAYTONA_API_KEY" not in run.runtime_env["env_vars"]
     assert run.runtime_env["env_vars"]["DAYTONA_MAX_CONCURRENCY"] == "4"
+    assert run.runtime_env["env_vars"]["DAYTONA_SEED_CODING"] == "0"
+    assert "DAYTONA_SEED_PROFILE" not in run.runtime_env["env_vars"]
+
+
+def test_toy_recipe_opts_into_coding_seed(tmp_path: Path) -> None:
+    from daytona_gym import ToyCodingRecipe
+
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text('{"prompt":"fix","label":"1"}\n', encoding="utf-8")
+    cfg = TrainConfig(
+        model=Qwen25_3B(
+            slime_root=str(tmp_path / "slime"),
+            megatron_root=str(tmp_path / "Megatron-LM"),
+            hf_checkpoint=str(tmp_path / "hf"),
+            ref_load=str(tmp_path / "ref"),
+        ),
+        dataset=PromptJsonlDataset(prompts),
+        recipe=ToyCodingRecipe(batch_size=1),
+        repo=tmp_path / "repo",
+        run_name="toy",
+        telemetry_path=tmp_path / "runs" / "toy.jsonl",
+    )
+    run = cfg.launch(dry_run=True)
+    env = run.runtime_env["env_vars"]
+    assert env["DAYTONA_SEED_CODING"] == "1"
+    assert env["DAYTONA_SEED_PROFILE"] == "basic"
+    assert "generate_dogfood.generate" in " ".join(run.command)
+
+
+def test_reward_callable_becomes_reward_path(tmp_path: Path) -> None:
+    from daytona_gym.adapters.slime.reward import from_trajectory
+
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text('{"prompt":"fix","label":"1"}\n', encoding="utf-8")
+    cfg = TrainConfig(
+        model=Qwen25_3B(
+            slime_root=str(tmp_path / "slime"),
+            megatron_root=str(tmp_path / "Megatron-LM"),
+            hf_checkpoint=str(tmp_path / "hf"),
+            ref_load=str(tmp_path / "ref"),
+        ),
+        dataset=PromptJsonlDataset(prompts),
+        recipe=Qwen25_3B_Recipe(),
+        reward=from_trajectory,
+        repo=tmp_path / "repo",
+        run_name="rw",
+        telemetry_path=tmp_path / "runs" / "rw.jsonl",
+    )
+    assert cfg.recipe.reward_path == "daytona_gym.adapters.slime.reward.from_trajectory"
+    run = cfg.launch(dry_run=True)
+    assert (
+        run.runtime_env["env_vars"]["DAYTONA_REWARD_PATH"]
+        == "daytona_gym.adapters.slime.reward.from_trajectory"
+    )
 
 
 def test_compute_escape_hatch_still_works(tmp_path: Path) -> None:

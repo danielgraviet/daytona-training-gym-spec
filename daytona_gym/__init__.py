@@ -19,6 +19,7 @@ from daytona_gym.gym import (
     Qwen25_14B_Recipe,
     SoftSlimeModel,
     SshWorker,
+    ToyCodingRecipe,
     TrainConfig,
     TrainingRun,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "ToolAction",
     "ToolName",
     "ToolResult",
+    "ToyCodingRecipe",
     "TrainConfig",
     "TrainingRun",
     "create_and_wait",

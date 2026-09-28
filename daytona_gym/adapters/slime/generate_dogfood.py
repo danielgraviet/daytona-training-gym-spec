@@ -2,6 +2,9 @@
 
 Import path:
   daytona_gym.adapters.slime.generate_dogfood.generate
+
+Prefer dataset/label ``seed_files``. The built-in add(a,b) profile is only
+applied when ``DAYTONA_SEED_CODING=1`` (ToyCodingRecipe / explicit opt-in).
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ from typing import Any
 from daytona_gym.adapters.slime._coding_seed import (
     CODING_RUN_TESTS_COMMAND,
     resolve_seed_profile,
+    run_tests_command_from_sample,
+    seed_files_from_sample,
 )
 from daytona_gym.adapters.slime.generate import generate as _generate
 
@@ -73,25 +78,38 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
             setattr(args, attr, value)
 
     args.daytona_return_logprob = True
-    if not getattr(args, "daytona_seed_files", None):
-        profile = os.environ.get("DAYTONA_SEED_PROFILE", "basic")
-        args.daytona_seed_files = resolve_seed_profile(profile)
-        args.daytona_seed_profile = profile
 
-    # Always (re)apply bootstrap unless explicitly disabled. Do not rely on
-    # "attribute is None" — Slime namespaces may carry stale empty values.
-    if _env_flag("DAYTONA_BOOTSTRAP_RUN_TESTS", True):
+    sample_seeds = seed_files_from_sample(sample)
+    if sample_seeds:
+        args.daytona_seed_files = sample_seeds
+    elif not getattr(args, "daytona_seed_files", None):
+        # Silent basic fallback removed — toy seed only when opted in.
+        if _env_flag("DAYTONA_SEED_CODING", False):
+            profile = os.environ.get("DAYTONA_SEED_PROFILE", "basic")
+            args.daytona_seed_files = resolve_seed_profile(profile)
+            args.daytona_seed_profile = profile
+        else:
+            args.daytona_seed_files = {}
+
+    sample_bootstrap = run_tests_command_from_sample(sample)
+    if sample_bootstrap:
+        args.daytona_bootstrap_run_tests = sample_bootstrap
+    elif _env_flag("DAYTONA_BOOTSTRAP_RUN_TESTS", True):
         args.daytona_bootstrap_run_tests = os.environ.get(
-            "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
-            CODING_RUN_TESTS_COMMAND,
+            "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD"
+        ) or (
+            CODING_RUN_TESTS_COMMAND
+            if _env_flag("DAYTONA_SEED_CODING", False)
+            else None
         )
     else:
         args.daytona_bootstrap_run_tests = None
 
+    seed_keys = list(getattr(args, "daytona_seed_files", None) or {})
     print(
         "[daytona-dogfood] start "
-        f"bootstrap={args.daytona_bootstrap_run_tests!r} "
-        f"seed_files={list((args.daytona_seed_files or {}).keys())} "
+        f"bootstrap={getattr(args, 'daytona_bootstrap_run_tests', None)!r} "
+        f"seed_files={seed_keys} "
         f"timeout={getattr(args, 'daytona_timeout_seconds', None)} "
         f"tool_timeout={getattr(args, 'daytona_tool_timeout_seconds', None)} "
         f"max_turns={args.daytona_max_turns}",

@@ -62,17 +62,16 @@ python examples/customer_dogfood/launch_leetcode_stretch.py --launch --detach
 11. **`HuggingFaceDataset.materialize()`** does not produce seeded sandbox tasks — useless alone for this agent loop.
 12. **7B / Coder on 1× A100** — not attempted; presets exist but unverified (separate risk).
 
-## What worked well
+## Phase 4 follow-up (SDK — 2026-09-28)
 
-- Laptop → RunPod proxy → detach → `Training complete` banner (Modal-shaped).
-- Daytona sandbox tool loop + reward=1.0 on stock coding seed (Phase 1 and 2).
-- Qwen2.5-3B tool use (`write_file` + `run_tests`) on this box.
-- Preflight / slime image assumption held for an existing customer pod.
+Product hole closed in tree:
 
-## Recommended product follow-ups (for later SDK work — not done here)
+- `launch_leetcode_stretch.py` now uses `HarborDataset(harbor_tasks)` so each
+  row carries real Two Sum / Valid Parentheses `seed_files` + `run_tests_command`.
+- Silent `basic` add(a,b) fallback is gone unless `ToyCodingRecipe` /
+  `seed_coding=True`.
+- Prefer `--worker vast` while the 4090 stays up for continual dogfood.
 
-- Dataset-driven sandbox seeds (or Harbor tasks) for real coding/LC problems.
-- First-class `dg dash --remote` that works without a local TTY, or auto-sync `runs/` after detach.
-- Example CLI flags for model/dataset (stop hardcoding `remote_from_laptop.py`).
-- Default localhost dash on workers; document Terminal-only `--remote`.
-- Avoid putting raw API keys in remote shell command lines.
+```bash
+python examples/customer_dogfood/launch_leetcode_stretch.py --worker vast --launch --detach
+```

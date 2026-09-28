@@ -4,18 +4,14 @@ from typing import Any
 
 from daytona_gym.runtime.reward import tests_passed_reward as _tests_passed_reward
 
-__all__ = ["reward", "tests_passed_reward", "custom_rm"]
-
 tests_passed_reward = _tests_passed_reward
 
 
-async def reward(args: Any, sample: Any, **kwargs: Any) -> float:
-    """Slime `--custom-rm-path` entrypoint.
+def from_trajectory(args: Any, sample: Any) -> float:
+    """TrainConfig ``reward=`` / ``reward_path`` helper: use Daytona sandbox reward.
 
-    Prefer reward already attached during generate (sandbox-side tests). Fall
-    back to label heuristics only when no Daytona reward was recorded.
+    Import path: ``daytona_gym.adapters.slime.reward.from_trajectory``
     """
-    del kwargs
     meta = getattr(sample, "metadata", None) or {}
     daytona = meta.get("daytona") if isinstance(meta, dict) else None
     if isinstance(daytona, dict) and daytona.get("reward") is not None:
@@ -33,5 +29,17 @@ async def reward(args: Any, sample: Any, **kwargs: Any) -> float:
     return 0.0
 
 
+async def reward(args: Any, sample: Any, **kwargs: Any) -> float:
+    """Slime `--custom-rm-path` entrypoint.
+
+    Prefer reward already attached during generate (sandbox-side tests). Fall
+    back to label heuristics only when no Daytona reward was recorded.
+    """
+    del kwargs
+    return from_trajectory(args, sample)
+
+
 # Alias matching Slime docs naming.
 custom_rm = reward
+
+__all__ = ["reward", "tests_passed_reward", "custom_rm", "from_trajectory"]

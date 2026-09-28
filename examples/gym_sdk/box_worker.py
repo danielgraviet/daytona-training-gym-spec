@@ -22,7 +22,7 @@ import json
 import os
 from pathlib import Path
 
-from daytona_gym import PromptJsonlDataset, Qwen25_05B, Qwen25_05B_Recipe, TrainConfig
+from daytona_gym import PromptJsonlDataset, Qwen25_05B, ToyCodingRecipe, TrainConfig
 from daytona_gym.adapters.slime._coding_seed import CODING_DOGFOOD_PROMPT
 
 workdir = Path(os.environ.get("DAYTONA_GYM_WORKDIR", ".")).resolve()
@@ -48,13 +48,13 @@ _recipe_kwargs = dict(
     offload_rollout=False,
 )
 try:
-    recipe = Qwen25_05B_Recipe(
+    recipe = ToyCodingRecipe(
         **_recipe_kwargs,
         tool_output_limit=4096,
         max_total_tokens=2048,
     )
 except TypeError:
-    recipe = Qwen25_05B_Recipe(**_recipe_kwargs)
+    recipe = ToyCodingRecipe(**_recipe_kwargs)
     os.environ.setdefault("DAYTONA_STDOUT_LIMIT", "4096")
     os.environ.setdefault("DAYTONA_MAX_TOTAL_TOKENS", "2048")
 

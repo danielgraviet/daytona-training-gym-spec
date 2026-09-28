@@ -16,15 +16,15 @@ how it was verified). ⏳ marks work that is partly done.
 | 1 Flagship analytics | ✅ done (1.2 live check pending) | Per-step "where time went" + $ — verified live on A100 |
 | 2 Durable telemetry | ✅ done, verified live | `dg ingest` on a Daytona sandbox; A100 run shipped live; pod stop → `worker_lost` (2.3 OTLP deferred) |
 | 3 BYO portability | ✅ exit met | 3.4 Vast 4090 green (`run_e169…`, 32 rollouts); 3.2 agent built (live dogfood optional) |
-| 4 Real task packs | not started | Dataset-driven seeds, reward callable, repo-scale pack |
+| 4 Real task packs | ⏳ exit pending live reward | Seeds/reward/ToyCodingRecipe/repo_pack shipped; Vast smoke proved dataset seeds |
 | 5 Analytics-only path | not started | Slime users anywhere get the dashboard via adapter + ingest token |
 
 ### Next up
 
-1. ~~Confirm 1.2 on A100~~ — confirmed (`run_ecc7…`: Slime split live; 3090 runs too).
-2. **3.4 on Vast.ai (RTX 4090)** — home 3090 abandoned; second provider is Vast +
-   published `daytona-gym-worker` image (Cuda 13 host template → edit image).
-3. Then harden ingest watch in the background; dogfood `dg worker` on the same box.
+1. ~~Phase 4 code~~ — 4.1–4.4 in tree; Vast `run_dc6b…` used Harbor `solution.py` seeds (not add(a,b)).
+2. **Re-dogfood Harbor on Vast** after `PYTHONPATH=.` nested-test fix (0.5B still weak at tool use).
+3. Optional: create Daytona snapshot + `repo_pack_dogfood.py --snapshot` for provision p95.
+4. Then Phase 5 analytics-only path.
 
 
 ## Why this phase
@@ -320,19 +320,33 @@ only the worker token/target differs. **Met (RunPod + Vast).**
 
 Goal: move past the hardcoded `add(a,b)` seed.
 
-- [ ] **4.1 Dataset-driven seeds by default.** Done when each row's
+- [x] **4.1 Dataset-driven seeds by default.** Done when each row's
   `seed_files` / repo ref + `run_tests` command drives the sandbox and the silent
   fallback to the `basic` profile is gone (`seed_files_from_label` exists).
-- [ ] **4.2 Python reward callable** on `TrainConfig`/recipe (not just an
+  - Note: `DAYTONA_SEED_CODING` opt-in only; sample/label seeds win in
+    `generate` + `generate_dogfood`. Harbor rows wrap instruction in the coding
+    tool protocol. Customer launcher uses `HarborDataset(harbor_tasks)`.
+- [x] **4.2 Python reward callable** on `TrainConfig`/recipe (not just an
   `rm_path` string). Reward semantics stay user-owned.
-- [ ] **4.3 Repo-scale task pack** (small real repo, multi-file fix, real test
+  - Note: `TrainConfig(reward=fn_or_path)` → `recipe.reward_path` →
+    `DAYTONA_REWARD_PATH` → `daytona_reward_function` in generate.
+    Helper: `daytona_gym.adapters.slime.reward.from_trajectory`.
+- [x] **4.3 Repo-scale task pack** (small real repo, multi-file fix, real test
   suite) using a **Daytona snapshot**; dashboard shows provision p95 with vs
   without snapshot.
-- [ ] **4.4 Rename `CodingRecipe` presets** away from implying the add-bug task.
+  - Note: `examples/gym_sdk/repo_pack/calc_fix` + `repo_pack_dogfood.py`.
+    `CodingRecipe.snapshot` / `DAYTONA_SNAPSHOT` wired to `EnvironmentSpec`.
+    Live snapshot create + p95 compare left for Vast dogfood (`--snapshot`).
+- [x] **4.4 Rename `CodingRecipe` presets** away from implying the add-bug task.
+  - Note: default `generate_path` is `generate.generate`; `seed_coding=False`.
+    `ToyCodingRecipe()` is the explicit add(a,b) dogfood preset.
 
 **Phase 4 exit:** the LeetCode customer dogfood from
 `examples/customer_dogfood/NOTES.md` trains on its own tasks.
-
+  - Note: Vast smoke **`run_7a400812361c43b88e3e1abeb4129e3e`** (0.5B):
+    bootstrap showed real `AssertionError` on parens (not ModuleNotFound /
+    not add(a,b)). Reward 0.0 — model too small to write the fix; use 3B for
+    exit criteria. Snapshot provision compare still optional.
 ---
 
 ## Phase 5 — Analytics-only adoption path
@@ -396,3 +410,5 @@ Phase 4 after Phase 3.3 (task data must reach the worker)
 | 2026-09-25 | `2e480a1`+ | `dg ingest deploy --daytona`; wheel build fix; live sandbox probe |
 | 2026-09-25 | (1.2) | Slime `perf/*` ingest → trainer vs overhead split; `dg ingest rm` |
 | 2026-09-25 | `6492e3b`…`58302b4` | 3.1 worker image (GHCR + Docker Hub), 3.3 dataset shipping, small-RAM fixes; 3090 attempts logged under 3.4 |
+| 2026-09-28 | `b6cf159` | Phase 3.4 Vast 4090 green; ingest/worker harden |
+| 2026-09-28 | (phase 4) | Dataset-driven seeds, ToyCodingRecipe, reward callable, repo_pack |

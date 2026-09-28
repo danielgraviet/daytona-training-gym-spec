@@ -17,8 +17,8 @@ load_dotenv()
 from daytona_gym import (  # noqa: E402
     PromptJsonlDataset,
     Qwen25_3B,
-    Qwen25_3B_Recipe,
     SshWorker,
+    ToyCodingRecipe,
     TrainConfig,
     runpod_worker,
 )
@@ -71,7 +71,7 @@ def main() -> int:
         dataset=PromptJsonlDataset(
             REPO / "examples/coding_dogfood/prompts/coding_one.jsonl"
         ),
-        recipe=Qwen25_3B_Recipe(),
+        recipe=ToyCodingRecipe(),
         repo=REPO,
     )
     try:

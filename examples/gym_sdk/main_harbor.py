@@ -20,6 +20,7 @@ from daytona_gym import (
     TrainConfig,
     runpod_worker,
 )
+from daytona_gym.adapters.slime.reward import from_trajectory
 from daytona_gym.envfile import load_dotenv
 
 load_dotenv()
@@ -34,6 +35,7 @@ config = TrainConfig(
         shuffle_seed=0,
     ),
     recipe=Qwen25_3B_Recipe(),
+    reward=from_trajectory,
     repo=REPO,
 )
 

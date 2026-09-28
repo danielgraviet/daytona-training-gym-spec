@@ -229,7 +229,8 @@ class HarborDataset:
     shuffle_tasks: bool = True
     input_key: str = "prompt"
     label_key: str = "label"
-    prompt_template: str = "{instruction}"
+    # None → coding-agent tool protocol wrapping ``instruction`` + run_tests.
+    prompt_template: str | None = None
 
     def cache_key(self) -> str | None:
         return "harbor_" + _fingerprint(
@@ -340,6 +341,15 @@ class HarborDataset:
             base = task_dir if not sub else task_dir / sub
             if base.is_dir():
                 candidates.extend(sorted(base.glob(self.seed_glob)))
+        # Repo-scale packs (calc/ops.py, pkg/module.py, …)
+        if self.seed_glob == "*.py":
+            candidates.extend(
+                sorted(
+                    p
+                    for p in task_dir.rglob("*.py")
+                    if p.is_file() and "__pycache__" not in p.parts
+                )
+            )
         if self.test_data_dir:
             tests = task_dir / self.test_data_dir
             if tests.is_dir():
@@ -362,9 +372,11 @@ class HarborDataset:
                 rel = path.relative_to(task_dir).as_posix()
             except ValueError:
                 rel = path.name
+            if rel.startswith("._") or "/._" in rel or "__pycache__" in rel:
+                continue
             try:
                 files[rel] = path.read_text(encoding="utf-8")
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 continue
         return files
 
@@ -382,10 +394,15 @@ class HarborDataset:
             if name in seed_files:
                 if name.endswith(".sh"):
                     return f"bash {name}"
+                # Nested tests need workspace root on sys.path (solution.py).
+                if "/" in name:
+                    return f"PYTHONPATH=. python {name}"
                 return f"python {name}"
         for key in seed_files:
             base = Path(key).name
             if base.startswith("test_") and base.endswith(".py"):
+                if "/" in key:
+                    return f"PYTHONPATH=. python {key}"
                 return f"python {key}"
             if base == "test.sh":
                 return f"bash {key}"
@@ -401,9 +418,19 @@ class HarborDataset:
                 else:
                     continue
             instruction = instruction_file.read_text(encoding="utf-8")
-            prompt = self.prompt_template.format(instruction=instruction)
             seed_files = self._collect_seed_files(task_dir)
             run_cmd = self._default_run_tests(seed_files)
+            template = self.prompt_template
+            if template is None:
+                from daytona_gym.adapters.slime._coding_seed import (
+                    CODING_AGENT_PROMPT_TEMPLATE,
+                )
+
+                template = CODING_AGENT_PROMPT_TEMPLATE
+            prompt = template.format(
+                instruction=instruction,
+                run_tests_command=run_cmd,
+            )
             label: dict[str, Any] = {
                 "harbor_task_name": task_dir.name,
                 "harbor_task_path": task_dir.as_posix(),
@@ -439,6 +466,7 @@ class HarborDataset:
             "shuffle_seed": self.shuffle_seed,
             "input_key": self.input_key,
             "label_key": self.label_key,
+            "prompt_template": self.prompt_template,
         }
 
 
@@ -483,6 +511,7 @@ def deserialize_dataset(blob: dict[str, Any]) -> AnyDataset:
             shuffle_seed=int(blob.get("shuffle_seed", 0)),
             input_key=blob.get("input_key", "prompt"),
             label_key=blob.get("label_key", "label"),
+            prompt_template=blob.get("prompt_template"),
         )
     raise ValueError(f"unknown dataset kind: {kind!r}")
 

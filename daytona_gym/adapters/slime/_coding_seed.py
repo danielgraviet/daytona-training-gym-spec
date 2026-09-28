@@ -51,21 +51,92 @@ def resolve_seed_profile(name: str | None) -> dict[str, str]:
     return dict(files)
 
 
-def seed_files_from_label(label: Any) -> dict[str, str]:
-    """Extract sandbox seed files from a Harbor/coding JSONL label."""
+def _parse_label(label: Any) -> dict[str, Any] | None:
     if isinstance(label, str):
         import json
 
         try:
             label = json.loads(label)
         except Exception:  # noqa: BLE001
-            return {}
-    if not isinstance(label, dict):
+            return None
+    if isinstance(label, dict):
+        return label
+    return None
+
+
+def seed_files_from_label(label: Any) -> dict[str, str]:
+    """Extract sandbox seed files from a Harbor/coding JSONL label."""
+    parsed = _parse_label(label)
+    if not parsed:
         return {}
-    files = label.get("seed_files")
+    files = parsed.get("seed_files")
     if isinstance(files, dict) and files:
         return {str(k): str(v) for k, v in files.items()}
     return {}
+
+
+def run_tests_command_from_label(label: Any) -> str | None:
+    """Extract per-row ``run_tests_command`` from a Harbor/coding label."""
+    parsed = _parse_label(label)
+    if not parsed:
+        return None
+    cmd = parsed.get("run_tests_command")
+    if isinstance(cmd, str) and cmd.strip():
+        return cmd.strip()
+    return None
+
+
+def seed_files_from_sample(sample: Any) -> dict[str, str]:
+    """Prefer label seeds, then ``metadata.daytona.seed_files``."""
+    files = seed_files_from_label(getattr(sample, "label", None))
+    if files:
+        return files
+    meta = getattr(sample, "metadata", None) or {}
+    if isinstance(meta, dict):
+        daytona = meta.get("daytona") or {}
+        if isinstance(daytona, dict):
+            nested = daytona.get("seed_files")
+            if isinstance(nested, dict) and nested:
+                return {str(k): str(v) for k, v in nested.items()}
+    return {}
+
+
+def run_tests_command_from_sample(sample: Any) -> str | None:
+    cmd = run_tests_command_from_label(getattr(sample, "label", None))
+    if cmd:
+        return cmd
+    meta = getattr(sample, "metadata", None) or {}
+    if isinstance(meta, dict):
+        daytona = meta.get("daytona") or {}
+        if isinstance(daytona, dict):
+            nested = daytona.get("run_tests_command")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+    return None
+
+
+# Default Harbor / dataset prompt: instruction + tool protocol.
+CODING_AGENT_PROMPT_TEMPLATE = """\
+You are a coding agent fixing a bug in a Daytona sandbox.
+
+Task:
+{instruction}
+
+Files are already present in the workspace. Bootstrap may have run tests —
+read any [environment bootstrap run_tests] output carefully.
+
+You MUST reply with exactly one JSON object per turn (no markdown fences, no prose).
+
+Tools:
+{{"type":"tool","name":"run_tests","arguments":{{"command":"{run_tests_command}"}}}}
+{{"type":"tool","name":"read_file","arguments":{{"path":"RELATIVE_PATH"}}}}
+{{"type":"tool","name":"write_file","arguments":{{"path":"RELATIVE_PATH","content":"FILE_CONTENTS"}}}}
+
+When (and only when) run_tests exits 0 / prints OK, finish with:
+{{"type":"final","content":"fixed"}}
+
+Do NOT emit final if tests still fail. Prefer write_file to fix the bug, then run_tests again.
+"""
 
 
 CODING_DOGFOOD_PROMPT = f"""\

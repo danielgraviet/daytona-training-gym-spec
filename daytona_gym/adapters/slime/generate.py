@@ -63,67 +63,36 @@ def _resolve_optional_int_arg(args: Any, attr: str, env_name: str) -> int | None
     return int(raw)
 
 
-def _seed_files_from_sample(sample: Any) -> dict[str, str]:
-    """Prefer per-row Harbor/coding seeds embedded in sample.label / metadata."""
-    label = getattr(sample, "label", None)
-    if isinstance(label, str):
-        try:
-            import json
-
-            label = json.loads(label)
-        except Exception:  # noqa: BLE001
-            label = None
-    if isinstance(label, dict):
-        files = label.get("seed_files")
-        if isinstance(files, dict) and files:
-            return {str(k): str(v) for k, v in files.items()}
-    meta = getattr(sample, "metadata", None) or {}
-    if isinstance(meta, dict):
-        daytona = meta.get("daytona") or {}
-        if isinstance(daytona, dict):
-            files = daytona.get("seed_files")
-            if isinstance(files, dict) and files:
-                return {str(k): str(v) for k, v in files.items()}
-    return {}
-
-
-def _bootstrap_from_sample(sample: Any) -> str | None:
-    label = getattr(sample, "label", None)
-    if isinstance(label, str):
-        try:
-            import json
-
-            label = json.loads(label)
-        except Exception:  # noqa: BLE001
-            label = None
-    if isinstance(label, dict):
-        cmd = label.get("run_tests_command")
-        if isinstance(cmd, str) and cmd.strip():
-            return cmd.strip()
-    return None
-
-
 def _resolve_seed_files(args: Any, sample: Any = None) -> dict[str, str]:
+    """Sample/label seeds win. Toy profiles only when ``DAYTONA_SEED_CODING=1``."""
     if sample is not None:
-        from_sample = _seed_files_from_sample(sample)
+        from daytona_gym.adapters.slime._coding_seed import seed_files_from_sample
+
+        from_sample = seed_files_from_sample(sample)
         if from_sample:
             return from_sample
     files = dict(getattr(args, "daytona_seed_files", None) or {})
     if files:
         return files
-    profile = os.environ.get("DAYTONA_SEED_PROFILE") or getattr(
-        args, "daytona_seed_profile", None
-    )
-    if profile or _env_truthy("DAYTONA_SEED_CODING", default=False):
+    # Opt-in only — do not treat a leftover DAYTONA_SEED_PROFILE as a silent
+    # fallback to the add(a,b) toy seed when the dataset carries no seeds.
+    if _env_truthy("DAYTONA_SEED_CODING", default=False):
         from daytona_gym.adapters.slime._coding_seed import resolve_seed_profile
 
+        profile = os.environ.get("DAYTONA_SEED_PROFILE") or getattr(
+            args, "daytona_seed_profile", None
+        )
         return resolve_seed_profile(str(profile) if profile else "basic")
     return {}
 
 
 def _resolve_bootstrap_run_tests(args: Any, sample: Any = None) -> str | None:
     if sample is not None:
-        from_sample = _bootstrap_from_sample(sample)
+        from daytona_gym.adapters.slime._coding_seed import (
+            run_tests_command_from_sample,
+        )
+
+        from_sample = run_tests_command_from_sample(sample)
         if from_sample:
             return from_sample
     explicit = getattr(args, "daytona_bootstrap_run_tests", None)
@@ -131,10 +100,8 @@ def _resolve_bootstrap_run_tests(args: Any, sample: Any = None) -> str | None:
         return explicit.strip()
     # Ray workers often only see env_vars from runtime_env — prefer that path.
     if _env_truthy("DAYTONA_BOOTSTRAP_RUN_TESTS", default=False):
-        return os.environ.get(
-            "DAYTONA_BOOTSTRAP_RUN_TESTS_CMD",
-            "python test_broken.py",
-        )
+        cmd = os.environ.get("DAYTONA_BOOTSTRAP_RUN_TESTS_CMD", "").strip()
+        return cmd or None
     return None
 
 
@@ -194,9 +161,13 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
         training_step, rollout_batch_id, step_source = _resolve_step_ids(
             args, derived_step
         )
+        image = getattr(args, "daytona_image", None) or os.environ.get("DAYTONA_IMAGE")
+        snapshot = getattr(args, "daytona_snapshot", None) or os.environ.get(
+            "DAYTONA_SNAPSHOT"
+        )
         spec = EnvironmentSpec(
-            image=getattr(args, "daytona_image", None),
-            snapshot=getattr(args, "daytona_snapshot", None),
+            image=str(image).strip() or None if image else None,
+            snapshot=str(snapshot).strip() or None if snapshot else None,
             timeout_seconds=sandbox_timeout,
             metadata={
                 "run_id": run_id,
@@ -359,6 +330,33 @@ def _flush_telemetry(args: Any) -> None:
             return
 
 
+def _load_reward_function(args: Any) -> Any:
+    reward_fn = getattr(args, "daytona_reward_function", None)
+    if reward_fn is not None:
+        return reward_fn
+    path = getattr(args, "daytona_reward_path", None) or os.environ.get(
+        "DAYTONA_REWARD_PATH"
+    )
+    if not path or not str(path).strip():
+        return None
+    import importlib
+
+    module_name, _, attr = str(path).strip().rpartition(".")
+    if not module_name or not attr:
+        raise DaytonaError(
+            ErrorCode.USER_CODE_ERROR,
+            f"DAYTONA_REWARD_PATH must be module.attr, got {path!r}",
+        )
+    module = importlib.import_module(module_name)
+    reward_fn = getattr(module, attr)
+    try:
+        args.daytona_reward_function = reward_fn
+        args.daytona_reward_path = str(path).strip()
+    except Exception:
+        pass
+    return reward_fn
+
+
 async def _maybe_reward(
     args: Any,
     sample: Any,
@@ -370,7 +368,7 @@ async def _maybe_reward(
     training_step: object | None = None,
     rollout_batch_id: str | None = None,
 ) -> None:
-    reward_fn = getattr(args, "daytona_reward_function", None)
+    reward_fn = _load_reward_function(args)
     if reward_fn is None:
         return
     ids = correlation_attributes(

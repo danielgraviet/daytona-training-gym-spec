@@ -56,8 +56,9 @@ async def test_seed_files_written_before_generate(tmp_path: Path, capsys) -> Non
     assert "write_file" in out
 
 
-async def test_generate_dogfood_defaults_seed(tmp_path: Path) -> None:
+async def test_generate_dogfood_defaults_seed(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "dogfood.jsonl"
+    monkeypatch.setenv("DAYTONA_SEED_CODING", "1")
     runtime = FakeEnvironmentRuntime()
     generator = ScriptedGenerator(
         [
@@ -84,6 +85,68 @@ async def test_generate_dogfood_defaults_seed(tmp_path: Path) -> None:
     # Bootstrap run_tests fails on seeded broken.py → reward 0.0
     assert sample.reward == 0.0
     assert args.daytona_bootstrap_run_tests == "python test_broken.py"
+
+
+async def test_no_silent_basic_seed_without_opt_in(tmp_path: Path, monkeypatch) -> None:
+    """Prompt-only rows must not get add(a,b) unless DAYTONA_SEED_CODING=1."""
+    monkeypatch.delenv("DAYTONA_SEED_CODING", raising=False)
+    monkeypatch.delenv("DAYTONA_SEED_PROFILE", raising=False)
+    path = tmp_path / "noseed.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator([final_turn("done")])
+    sample = FakeSlimeSample(prompt="LeetCode Two Sum", index=4, label="fixed")
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_path=str(path),
+    )
+    if hasattr(args, "daytona_seed_files"):
+        delattr(args, "daytona_seed_files")
+    try:
+        await dogfood_generate(args, sample, {})
+        args.daytona_telemetry_store.flush()
+    finally:
+        args.daytona_telemetry_store.close()
+
+    files = runtime.files_for(runtime.created_ids[0])
+    assert "broken.py" not in files
+    assert "test_broken.py" not in files
+
+
+async def test_sample_seed_files_win_over_toy_profile(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DAYTONA_SEED_CODING", "1")
+    monkeypatch.setenv("DAYTONA_SEED_PROFILE", "basic")
+    path = tmp_path / "harbor.jsonl"
+    runtime = FakeEnvironmentRuntime()
+    generator = ScriptedGenerator([final_turn("done")])
+    sample = FakeSlimeSample(
+        prompt="fix two_sum",
+        index=5,
+        label={
+            "seed_files": {
+                "solution.py": "def two_sum(nums, target):\n    return [0, 0]\n",
+                "tests/test_solution.py": "from solution import two_sum\nassert False\n",
+            },
+            "run_tests_command": "python tests/test_solution.py",
+        },
+    )
+    args = make_args(
+        runtime=runtime,
+        generator=generator,
+        daytona_telemetry_path=str(path),
+    )
+    if hasattr(args, "daytona_seed_files"):
+        delattr(args, "daytona_seed_files")
+    try:
+        await dogfood_generate(args, sample, {})
+        args.daytona_telemetry_store.flush()
+    finally:
+        args.daytona_telemetry_store.close()
+
+    files = runtime.files_for(runtime.created_ids[0])
+    assert "solution.py" in files
+    assert "broken.py" not in files
+    assert args.daytona_bootstrap_run_tests == "python tests/test_solution.py"
 
 
 async def test_bootstrap_run_tests_emits_tool_span(tmp_path: Path, capsys) -> None:

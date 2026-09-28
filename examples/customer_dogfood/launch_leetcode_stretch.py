@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Customer-side launch (NOT SDK): LeetCode-flavored prompts + Qwen2.5-3B on RunPod.
+"""LeetCode-style tasks with real sandbox seeds (Phase 4 exit path).
 
-Does not modify daytona_gym/. Demonstrates the seed/prompt product hole:
-prompts talk about LeetCode, but the sandbox seed remains add(a,b).
+Uses the local Harbor-shaped pack under ``examples/gym_sdk/harbor_tasks/``
+(Two Sum + Valid Parentheses) so each row carries ``seed_files`` +
+``run_tests_command`` — no silent add(a,b) fallback.
 """
 
 from __future__ import annotations
@@ -16,16 +17,18 @@ from daytona_gym.envfile import load_dotenv
 load_dotenv()
 
 from daytona_gym import (  # noqa: E402
-    PromptJsonlDataset,
+    HarborDataset,
     Qwen25_3B,
     Qwen25_3B_Recipe,
     TrainConfig,
     runpod_worker,
+    vast_worker,
 )
+from daytona_gym.adapters.slime.reward import from_trajectory  # noqa: E402
 from daytona_gym.runtime.errors import DaytonaError
 
 REPO = Path(__file__).resolve().parents[2]
-DATA = Path(__file__).resolve().parent / "leetcode_easy.jsonl"
+TASKS = REPO / "examples" / "gym_sdk" / "harbor_tasks"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,15 +37,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--detach", action="store_true")
     parser.add_argument("--no-wait", action="store_true")
     parser.add_argument("--skip-preflight", action="store_true")
+    parser.add_argument(
+        "--worker",
+        choices=("runpod", "vast"),
+        default="runpod",
+        help="BYO GPU provider (Vast kept warm for continual Phase 4 dogfood)",
+    )
     args = parser.parse_args(argv)
 
-    worker = runpod_worker(remote_repo="/root/daytona-training-gym-spec", pull=True)
+    if args.worker == "vast":
+        worker = vast_worker(remote_repo="/root/daytona-training-gym-spec", pull=True)
+    else:
+        worker = runpod_worker(remote_repo="/root/daytona-training-gym-spec", pull=True)
     print(f"worker={worker.host}" + (f":{worker.port}" if worker.port else ""), flush=True)
 
     config = TrainConfig(
         model=Qwen25_3B(),
-        dataset=PromptJsonlDataset(DATA),
+        dataset=HarborDataset(
+            path=TASKS,
+            train_size=2,
+            shuffle_seed=0,
+            shuffle_tasks=False,
+        ),
         recipe=Qwen25_3B_Recipe(batch_size=1, n_samples=1, num_rollout=1),
+        reward=from_trajectory,
         repo=REPO,
     )
 

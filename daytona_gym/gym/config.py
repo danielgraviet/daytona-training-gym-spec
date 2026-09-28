@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from daytona_gym.gym.compute import LocalSlimeCompute
 from daytona_gym.gym.dataset import (
@@ -26,6 +27,8 @@ from daytona_gym.runtime.errors import DaytonaError, ErrorCode
 if TYPE_CHECKING:
     from daytona_gym.gym.worker import Worker
 
+RewardFn = Callable[..., Any]
+
 
 @dataclass
 class TrainConfig:
@@ -45,6 +48,10 @@ class TrainConfig:
 
     ``gpu_cost_per_hour`` (per GPU) turns idle-GPU time into dollars in the
     dashboard / ``dg stats``; omit it and $ figures are hidden.
+
+    ``reward`` — optional Python callable or dotted ``module.fn`` path. Wired into
+    generate as ``daytona_reward_function`` (user-owned semantics). Callables must
+    be top-level importable functions so remote workers can resolve them.
     """
 
     dataset: AnyDataset
@@ -58,9 +65,13 @@ class TrainConfig:
     harbor: HarborBackend | HarborRecipe | None = None
     # Optional $/GPU-hour for the BYO worker; enables $ columns in analytics.
     gpu_cost_per_hour: float | None = None
+    reward: RewardFn | str | None = None
 
     def __post_init__(self) -> None:
         self.backend = resolve_backend(self.backend)
+        path = self.resolved_reward_path()
+        if path and not self.recipe.reward_path:
+            self.recipe = replace(self.recipe, reward_path=path)
         if self.backend == "harbor":
             return
         if self.model is None and self.compute is None:
@@ -68,6 +79,22 @@ class TrainConfig:
                 ErrorCode.USER_CODE_ERROR,
                 "TrainConfig requires model=... (preferred) or compute=...",
             )
+
+    def resolved_reward_path(self) -> str | None:
+        """Dotted import path for ``reward`` / ``recipe.reward_path``."""
+        if self.reward is None:
+            return self.recipe.reward_path
+        if isinstance(self.reward, str):
+            return self.reward.strip() or None
+        mod = getattr(self.reward, "__module__", None)
+        qual = getattr(self.reward, "__qualname__", None)
+        if not mod or not qual or "<" in str(qual):
+            raise DaytonaError(
+                ErrorCode.USER_CODE_ERROR,
+                "TrainConfig.reward callable must be a top-level function "
+                "(or pass a dotted module.fn string)",
+            )
+        return f"{mod}.{qual}"
 
     def resolved_compute(self) -> LocalSlimeCompute:
         if self.compute is not None:

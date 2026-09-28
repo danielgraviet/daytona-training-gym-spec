@@ -5,7 +5,11 @@ from dataclasses import dataclass, fields, replace
 
 @dataclass(frozen=True)
 class CodingRecipe:
-    """Coding-agent Slime×Daytona knobs proven in ``examples/coding_dogfood/``."""
+    """Slime×Daytona coding-agent knobs (dataset seeds drive the sandbox).
+
+    Toy add(a,b) seed is **opt-in** via ``ToyCodingRecipe`` / ``seed_coding=True``.
+    Prefer Harbor / JSONL rows with ``seed_files`` + ``run_tests_command``.
+    """
 
     batch_size: int = 1
     n_samples: int = 1
@@ -14,10 +18,14 @@ class CodingRecipe:
     max_concurrency: int | None = None
     max_response_len: int = 768
     temperature: float = 0.4
-    seed_coding: bool = True
+    # Opt-in toy seed (basic/multifile profiles). Off by default so dataset
+    # rows without seed_files do not silently train on add(a,b).
+    seed_coding: bool = False
     seed_profile: str = "basic"
     bootstrap_run_tests: bool = True
-    bootstrap_run_tests_cmd: str = "python test_broken.py"
+    # Fallback when the row has no run_tests_command. Empty by default —
+    # ToyCodingRecipe sets ``python test_broken.py``.
+    bootstrap_run_tests_cmd: str = ""
     require_passing_tests: bool = True
     allow_aborted: bool = False
     timeout_seconds: float | None = None
@@ -32,7 +40,13 @@ class CodingRecipe:
     # rollout. When exceeded the rollout ends as ``truncated`` instead of
     # growing until the trainer OOMs on a long sample.
     max_total_tokens: int | None = None
-    generate_path: str = "daytona_gym.adapters.slime.generate_dogfood.generate"
+    # Daytona sandbox image / snapshot (snapshot preferred when set).
+    image: str | None = None
+    snapshot: str | None = None
+    # Optional dotted path ``module.fn(args, sample) -> float`` (async OK).
+    # Wired into generate as ``daytona_reward_function``; semantics stay user-owned.
+    reward_path: str | None = None
+    generate_path: str = "daytona_gym.adapters.slime.generate.generate"
     rm_path: str = "daytona_gym.adapters.slime.reward.reward"
     save_interval: int = 9999
     # Colocated Slime offloads the idle engine to CPU RAM each step by default
@@ -60,6 +74,18 @@ def _recipe(**overrides: object) -> CodingRecipe:
     if unknown:
         raise TypeError(f"unknown CodingRecipe fields: {sorted(unknown)}")
     return replace(base, **overrides)  # type: ignore[arg-type]
+
+
+def ToyCodingRecipe(**overrides: object) -> CodingRecipe:
+    """Built-in add(a,b) sandbox seed — dogfood / smoke only."""
+    return _recipe(
+        seed_coding=True,
+        seed_profile="basic",
+        bootstrap_run_tests=True,
+        bootstrap_run_tests_cmd="python test_broken.py",
+        generate_path="daytona_gym.adapters.slime.generate_dogfood.generate",
+        **overrides,
+    )
 
 
 def Qwen25_3B_Recipe(**overrides: object) -> CodingRecipe:

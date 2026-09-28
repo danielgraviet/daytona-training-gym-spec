@@ -23,6 +23,7 @@ async def test_dogfood_honors_seed_profile_and_timeouts(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "edge.jsonl"
+    monkeypatch.setenv("DAYTONA_SEED_CODING", "1")
     monkeypatch.setenv("DAYTONA_SEED_PROFILE", "multifile")
     monkeypatch.setenv("DAYTONA_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("DAYTONA_TOOL_TIMEOUT_SECONDS", "10")
