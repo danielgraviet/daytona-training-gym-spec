@@ -155,8 +155,11 @@ def _validate_ndjson(body: bytes) -> str | None:
     return None
 
 
-def make_handler(store: IngestStore, *, token: str | None):
+def make_handler(store: IngestStore, *, token: str | None, jobs: JobQueue | None = None):
+    from daytona_gym.ingest.jobs import JobQueue as _JobQueue
     from daytona_gym.telemetry import dashboard as dash
+
+    queue = jobs if jobs is not None else _JobQueue(store.root)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "daytona-gym-ingest/0.1"
@@ -205,16 +208,102 @@ def make_handler(store: IngestStore, *, token: str | None):
                 return None
             return self.rfile.read(length) if length else b""
 
+        def _jobs_api(self, method: str, parts: list[str]) -> bool:
+            """Handle /v1/jobs and /v1/workers/* control-plane routes. Returns True if handled."""
+            if not parts or parts[0] != "v1":
+                return False
+            if not self._authorized():
+                self._json(401, {"error": "unauthorized"})
+                return True
+            # POST /v1/jobs
+            if method == "POST" and parts == ["v1", "jobs"]:
+                body = self._read_body()
+                if body is None:
+                    return True
+                try:
+                    payload = json.loads(body.decode("utf-8") or "{}")
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    self._json(400, {"error": "JSON object required"})
+                    return True
+                if not isinstance(payload, dict):
+                    self._json(400, {"error": "JSON object required"})
+                    return True
+                job = queue.enqueue(payload)
+                self._json(201, job)
+                return True
+            # GET /v1/jobs/<id>
+            if method == "GET" and len(parts) == 3 and parts[1] == "jobs":
+                job = queue.get(parts[2])
+                if job is None:
+                    self._json(404, {"error": "job not found"})
+                else:
+                    self._json(200, job)
+                return True
+            # POST /v1/jobs/<id>/status
+            if (
+                method == "POST"
+                and len(parts) == 4
+                and parts[1] == "jobs"
+                and parts[3] == "status"
+            ):
+                body = self._read_body()
+                if body is None:
+                    return True
+                try:
+                    payload = json.loads(body.decode("utf-8") or "{}")
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    self._json(400, {"error": "JSON object required"})
+                    return True
+                status = str((payload or {}).get("status") or "")
+                result = (payload or {}).get("result")
+                if not status:
+                    self._json(400, {"error": "status required"})
+                    return True
+                job = queue.update(
+                    parts[2],
+                    status=status,
+                    result=result if isinstance(result, dict) else None,
+                )
+                if job is None:
+                    self._json(404, {"error": "job not found"})
+                else:
+                    self._json(200, job)
+                return True
+            # POST /v1/workers/claim
+            if method == "POST" and parts == ["v1", "workers", "claim"]:
+                body = self._read_body()
+                if body is None:
+                    return True
+                try:
+                    payload = json.loads(body.decode("utf-8") or "{}")
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    payload = {}
+                worker_id = str((payload or {}).get("worker_id") or "anonymous")
+                gpu = (payload or {}).get("gpu") if isinstance(payload, dict) else None
+                job = queue.claim(
+                    worker_id=worker_id,
+                    gpu=gpu if isinstance(gpu, dict) else None,
+                )
+                if job is None:
+                    self._json(200, {"job": None})
+                else:
+                    self._json(200, job)
+                return True
+            return False
+
         # ---- GET: health, login, dashboard -----------------------------
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
+            parts = [p for p in path.split("/") if p]
             if path == "/healthz":
                 self._json(200, {"ok": True})
                 return
             if path == "/login":
                 nxt = parse_qs(parsed.query).get("next", ["/"])[0]
                 self._login_page(nxt)
+                return
+            if self._jobs_api("GET", parts):
                 return
             if not self._authorized():
                 if path.startswith("/api/"):
@@ -247,6 +336,9 @@ def make_handler(store: IngestStore, *, token: str | None):
             raw = urlparse(self.path).path
             if unquote(raw) == "/login":
                 self._login_submit()
+                return
+            parts = [unquote(p) for p in raw.split("/") if p]
+            if self._jobs_api("POST", parts):
                 return
             self._ingest("POST", raw)
 
@@ -343,8 +435,11 @@ def make_handler(store: IngestStore, *, token: str | None):
 
 
 def serve(data_dir: Path, *, host: str, port: int, token: str | None) -> ThreadingHTTPServer:
+    from daytona_gym.ingest.jobs import JobQueue
+
     store = IngestStore(data_dir)
-    return ThreadingHTTPServer((host, port), make_handler(store, token=token))
+    jobs = JobQueue(data_dir)
+    return ThreadingHTTPServer((host, port), make_handler(store, token=token, jobs=jobs))
 
 
 def push_main(argv: list[str]) -> int:

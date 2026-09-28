@@ -154,3 +154,26 @@ TypeError: 'NoneType' object is not iterable
 ```text
 [daytona-dogfood] status=completed sandbox=49f58372-... reward=None tokens=200
 ```
+
+## Vast.ai RTX 4090 (Phase 3.4, 2026-09-28)
+
+- Provider retarget after home 3090 became unavailable.
+- Template: any **Cuda 13 + SSH** (not ARM); edit image to
+  `docker.io/dtgraviet/daytona-gym-worker:latest` (not raw `slimerl/slime`).
+- Need host CUDA ≥ 12.9; 12.4/12.8 templates refuse the worker image.
+- On-box entry: `examples/gym_sdk/vast_worker.py` (= `box_worker.py`).
+- Secrets: `~/.daytona-gym.env` with `DAYTONA_API_KEY`, ingest URL/token, optional `HF_TOKEN`.
+- Laptop helper: `from daytona_gym import vast_worker` (`VAST_API_KEY` / `VAST_INSTANCE_ID`).
+- Ingest: `dg ingest deploy --daytona`; keep alive with `dg ingest watch --daytona`.
+- Length guards (from 3090 OOM learnings): recipe `tool_output_limit`, `max_total_tokens`.
+
+
+### Live green run (2026-09-28)
+
+- Host: Vast `23.158.136.85:31896`, RTX 4090 48GB (driver CUDA 13.0), ~630 GB RAM
+- Image: `dtgraviet/daytona-gym-worker:latest` (SSH mode, disk 100 GB, `sleep infinity`)
+- Script: `/workspace/box_worker.py` (Qwen2.5-0.5B, no offload, 4×8 rollouts)
+- **`run_e1696886abf446d8b402f40457e8fc32`** — Ray job succeeded; ingest `completed`, **32 rollouts**
+- Dashboard: ingest `/run/run_e1696886abf446d8b402f40457e8fc32`
+- Note: 0.5B still often fails the coding task (reward 0); portability proof is exit 0 + ingest, not reward.
+

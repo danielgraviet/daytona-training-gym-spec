@@ -23,6 +23,7 @@ from daytona_gym.gym import (
     TrainingRun,
 )
 from daytona_gym.gym.providers.runpod import create_pod, runpod_worker
+from daytona_gym.gym.providers.vast import create_and_wait, create_instance, vast_worker
 from daytona_gym.runtime.daytona import DaytonaEnvironmentRuntime
 from daytona_gym.runtime.environment import EnvironmentRuntime
 from daytona_gym.runtime.errors import DaytonaError, ErrorCode
@@ -68,7 +69,10 @@ __all__ = [
     "ToolResult",
     "TrainConfig",
     "TrainingRun",
+    "create_and_wait",
+    "create_instance",
     "create_pod",
     "runpod_worker",
+    "vast_worker",
     "__version__",
 ]

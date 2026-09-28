@@ -53,6 +53,16 @@ def _resolve_int_arg(args: Any, attr: str, env_name: str, default: int) -> int:
     return int(raw)
 
 
+def _resolve_optional_int_arg(args: Any, attr: str, env_name: str) -> int | None:
+    value = getattr(args, attr, None)
+    if value is not None:
+        return int(value)
+    raw = os.environ.get(env_name)
+    if raw is None or not str(raw).strip():
+        return None
+    return int(raw)
+
+
 def _seed_files_from_sample(sample: Any) -> dict[str, str]:
     """Prefer per-row Harbor/coding seeds embedded in sample.label / metadata."""
     label = getattr(sample, "label", None)
@@ -170,6 +180,14 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
     max_tools = _resolve_int_arg(
         args, "daytona_max_tools_per_turn", "DAYTONA_MAX_TOOLS_PER_TURN", 4
     )
+    stdout_limit = _resolve_optional_int_arg(
+        args, "daytona_stdout_limit", "DAYTONA_STDOUT_LIMIT"
+    )
+    if stdout_limit is None:
+        stdout_limit = int(getattr(args, "daytona_stdout_limit", 16_384) or 16_384)
+    max_total_tokens = _resolve_optional_int_arg(
+        args, "daytona_max_total_tokens", "DAYTONA_MAX_TOTAL_TOKENS"
+    )
 
     worker_id = _resolve_worker_id(args)
     with default_tracker().track() as derived_step:
@@ -197,8 +215,9 @@ async def generate(args: Any, sample: Any, sampling_params: dict) -> Any:
             max_tools_per_turn=max_tools,
             sample_id=sample_id,
             project_id=getattr(args, "daytona_project_id", None),
-            stdout_limit=int(getattr(args, "daytona_stdout_limit", 16_384)),
+            stdout_limit=stdout_limit,
             tool_timeout_seconds=tool_timeout,
+            max_total_tokens=max_total_tokens,
             worker_id=worker_id,
             training_step=training_step,
             rollout_batch_id=rollout_batch_id,

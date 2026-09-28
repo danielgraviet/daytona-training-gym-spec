@@ -32,24 +32,37 @@ data.write_text(
     "".join(json.dumps({"prompt": CODING_DOGFOOD_PROMPT, "label": "fixed"}) + "\n" for _ in range(16))
 )
 
+# Length guards need a gym build that has the fields; older worker images ignore them.
+_recipe_kwargs = dict(
+    batch_size=4,
+    n_samples=2,
+    num_rollout=4,
+    # Keep each multi-turn sample ~2k tokens: its fp32 logits (152k vocab)
+    # must fit next to the resident engines. Live 3090: 6 turns OOM'd at ~5k
+    # tokens, 3 turns at a 2.8k-token straggler in step 3.
+    max_turns=2,
+    max_response_len=512,
+    timeout_seconds=180,
+    tool_timeout_seconds=60,
+    offload_train=False,
+    offload_rollout=False,
+)
+try:
+    recipe = Qwen25_05B_Recipe(
+        **_recipe_kwargs,
+        tool_output_limit=4096,
+        max_total_tokens=2048,
+    )
+except TypeError:
+    recipe = Qwen25_05B_Recipe(**_recipe_kwargs)
+    os.environ.setdefault("DAYTONA_STDOUT_LIMIT", "4096")
+    os.environ.setdefault("DAYTONA_MAX_TOTAL_TOKENS", "2048")
+
 config = TrainConfig(
     # 15% of VRAM (~3.5 GB) is enough SGLang for 0.5B; the rest is Megatron's.
     model=Qwen25_05B(sglang_mem_fraction=0.15),
     dataset=PromptJsonlDataset(data),
-    recipe=Qwen25_05B_Recipe(
-        batch_size=4,
-        n_samples=2,
-        num_rollout=4,
-        # Keep each multi-turn sample ~2k tokens: its fp32 logits (152k vocab)
-        # must fit next to the resident engines. Live 3090: 6 turns OOM'd at ~5k
-        # tokens, 3 turns at a 2.8k-token straggler in step 3.
-        max_turns=2,
-        max_response_len=512,
-        timeout_seconds=180,
-        tool_timeout_seconds=60,
-        offload_train=False,
-        offload_rollout=False,
-    ),
+    recipe=recipe,
     gpu_cost_per_hour=float(os.environ.get("GPU_COST_PER_HOUR", "0.0")) or None,
 )
 

@@ -25,6 +25,13 @@ class CodingRecipe:
     sandbox_timeout_seconds: float | None = None
     max_turns: int | None = None
     max_tools_per_turn: int | None = None
+    # Cap captured tool stdout/stderr (chars). Keeps observations short so
+    # Megatron logits for the next train step stay on-GPU.
+    tool_output_limit: int | None = None
+    # Soft budget on prompt + generation + tool observation tokens for one
+    # rollout. When exceeded the rollout ends as ``truncated`` instead of
+    # growing until the trainer OOMs on a long sample.
+    max_total_tokens: int | None = None
     generate_path: str = "daytona_gym.adapters.slime.generate_dogfood.generate"
     rm_path: str = "daytona_gym.adapters.slime.reward.reward"
     save_interval: int = 9999

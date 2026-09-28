@@ -65,6 +65,9 @@ class RolloutRequest:
     project_id: str | None = None
     stdout_limit: int = DEFAULT_CAPTURE_LIMIT
     tool_timeout_seconds: float | None = None
+    # Soft token budget for the whole rollout (prompt + gens + tool obs).
+    # None = unlimited. Exceeding ends the rollout as ``truncated``.
+    max_total_tokens: int | None = None
     worker_id: str | None = None
     training_step: int | str | None = None
     rollout_batch_id: str | None = None
@@ -121,14 +124,24 @@ class RolloutRunner:
                     rollout_span.set_attribute("sandbox_id", sandbox_id)
                     await self._seed_files(env, request, ids)
                     conversation = request.prompt
+                    used_tokens = _estimate_tokens(request.prompt)
                     bootstrap_event = await self._bootstrap_run_tests(env, request, ids)
                     if bootstrap_event is not None:
                         events.append(bootstrap_event)
+                        used_tokens += _event_token_estimate(bootstrap_event)
                         conversation = (
                             f"{conversation}\n\n"
                             f"[environment bootstrap run_tests]\n{bootstrap_event.text}\n"
                         )
                     for _turn in range(request.max_turns):
+                        if _budget_exceeded(request, used_tokens):
+                            status = "truncated"
+                            error_message = (
+                                f"max_total_tokens={request.max_total_tokens} "
+                                f"reached (~{used_tokens} tokens); ending rollout"
+                            )
+                            print(f"[daytona-gym] {error_message}", flush=True)
+                            break
                         try:
                             generation, gen_event = await self._generate(
                                 conversation, request.sampling_params, ids
@@ -155,6 +168,15 @@ class RolloutRunner:
                                 break
                             raise
                         events.append(gen_event)
+                        used_tokens += _event_token_estimate(gen_event)
+                        if _budget_exceeded(request, used_tokens):
+                            status = "truncated"
+                            error_message = (
+                                f"max_total_tokens={request.max_total_tokens} "
+                                f"reached after generate (~{used_tokens} tokens)"
+                            )
+                            print(f"[daytona-gym] {error_message}", flush=True)
+                            break
                         preview, _ = clip_text(generation.text, 400)
                         model_text = sanitize_generation_text(generation.text)
                         try:
@@ -225,7 +247,16 @@ class RolloutRunner:
                                 env, action.tool, request, ids
                             )
                             events.append(tool_event)
+                            used_tokens += _event_token_estimate(tool_event)
                             conversation = f"{conversation}{tool_event.text}"
+                            if _budget_exceeded(request, used_tokens):
+                                status = "truncated"
+                                error_message = (
+                                    f"max_total_tokens={request.max_total_tokens} "
+                                    f"reached after tool (~{used_tokens} tokens)"
+                                )
+                                print(f"[daytona-gym] {error_message}", flush=True)
+                                break
                             if (
                                 action.tool.name == ToolName.RUN_TESTS
                                 and tool_event.ok is False
@@ -235,6 +266,9 @@ class RolloutRunner:
                                     "fix the bug with write_file, then run_tests again. "
                                     "Do not emit final yet.\n"
                                 )
+
+                        if status == "truncated":
+                            break
 
                         if final_actions:
                             action = final_actions[-1]
@@ -570,6 +604,24 @@ def _tests_currently_passing(events: list[TrajectoryEvent]) -> bool:
     if last_tests is None:
         return False
     return bool(last_tests.ok) and (last_tests.exit_code or 0) == 0
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token count when the backend did not return token ids (~4 chars/token)."""
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+def _event_token_estimate(event: TrajectoryEvent) -> int:
+    if event.token_ids is not None:
+        return len(event.token_ids)
+    return _estimate_tokens(event.text or "")
+
+
+def _budget_exceeded(request: RolloutRequest, used_tokens: int) -> bool:
+    budget = request.max_total_tokens
+    return budget is not None and used_tokens >= int(budget)
 
 
 def _reward_from_events(events: list[TrajectoryEvent]) -> float | None:

@@ -80,6 +80,8 @@ def build_runtime_env(
         ("DAYTONA_SANDBOX_TIMEOUT_SECONDS", recipe.sandbox_timeout_seconds),
         ("DAYTONA_MAX_TURNS", recipe.max_turns),
         ("DAYTONA_MAX_TOOLS_PER_TURN", recipe.max_tools_per_turn),
+        ("DAYTONA_STDOUT_LIMIT", recipe.tool_output_limit),
+        ("DAYTONA_MAX_TOTAL_TOKENS", recipe.max_total_tokens),
     ]
     for key, value in optional:
         if value is not None:

@@ -39,8 +39,10 @@ def main(argv: list[str] | None = None) -> int:
             "  dg dash --remote USER@HOST   escape hatch (non-RunPod SSH)\n"
             "  dg ingest          durable run history + dashboard (workers ship here)\n"
             "  dg ingest deploy --daytona   run it in a long-lived Daytona sandbox\n"
+            "  dg ingest watch --daytona    redeploy when /healthz fails\n"
             "  dg ingest rm RUN   delete a run from the ingest host\n"
             "  dg ingest push runs/ID.jsonl   backfill a run that wasn't shipped\n"
+            "  dg worker          outbound GPU agent (claims jobs from ingest)\n"
             "  dg run main.py     run a Modal-shaped train script (or uv run)\n"
             "  dg run list|status|logs|wait|stop\n"
             "  dg skills install  install agent skill bundle\n"
@@ -70,9 +72,17 @@ def main(argv: list[str] | None = None) -> int:
             from daytona_gym.ingest.deploy import main as deploy_main
 
             return deploy_main(args[2:])
+        if args[1:2] == ["watch"]:
+            from daytona_gym.ingest.watchdog import main as watch_main
+
+            return watch_main(args[2:])
         from daytona_gym.ingest.server import main as ingest_main
 
         return ingest_main(args[1:])
+    if args and args[0] == "worker":
+        from daytona_gym.workers.agent import main as worker_main
+
+        return worker_main(args[1:])
     if args and args[0] == "run":
         from daytona_gym.gym.run_cli import main as run_main
 
